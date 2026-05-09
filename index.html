@@ -747,9 +747,37 @@ return titles[key] || 'Тест';
 
 function showTestSelection(){
 
-let html = `
+document
+.getElementById('login-card')
+.classList.add('hidden');
 
-<div class="card">
+document
+.getElementById('quiz-card')
+.classList.add('hidden');
+
+document
+.getElementById('result-card')
+.classList.add('hidden');
+
+let existing =
+document.getElementById(
+'test-selection'
+);
+
+if(existing){
+
+existing.remove();
+
+}
+
+const div =
+document.createElement('div');
+
+div.id = 'test-selection';
+
+div.className = 'card';
+
+div.innerHTML = `
 
 <h1>Выберите тест</h1>
 
@@ -791,11 +819,11 @@ style="background:#dc3545;">
 🚪 Выйти
 </button>
 
-</div>
-
 `;
 
-document.querySelector('.container').innerHTML = html;
+document
+.querySelector('.container')
+.appendChild(div);
 
 }
 function loadQuestion(){
