@@ -203,6 +203,58 @@ SUPABASE_ANON_KEY
 
 let currentUser = null;
 
+async function createUser(){
+
+const username =
+document.getElementById(
+'new-username'
+).value;
+
+const password =
+document.getElementById(
+'new-password'
+).value;
+
+const role =
+document.getElementById(
+'new-role'
+).value;
+
+if(!username || !password){
+
+alert('Заполните поля');
+
+return;
+
+}
+
+const { error } =
+await supabaseClient
+.from('users')
+.insert([
+{
+username,
+password,
+role
+}
+]);
+
+if(error){
+
+alert('Ошибка создания');
+
+console.log(error);
+
+}else{
+
+alert('Пользователь создан');
+
+openAdminPanel();
+
+}
+
+}
+
 async function openAdminPanel(){
 
 const { data } =
@@ -214,9 +266,50 @@ await supabaseClient
 
 let html = `
 <div class="container">
+
 <div class="card">
 
 <h1>Админ-панель</h1>
+
+<h2>Создать пользователя</h2>
+
+<input
+id="new-username"
+placeholder="Логин">
+
+<input
+id="new-password"
+placeholder="Пароль">
+
+<select
+id="new-role"
+style="
+width:100%;
+padding:14px;
+margin-top:12px;
+border-radius:12px;
+font-size:16px;
+">
+
+<option value="student">
+student
+</option>
+
+<option value="admin">
+admin
+</option>
+
+</select>
+
+<button onclick="createUser()">
+Создать пользователя
+</button>
+
+</div>
+
+<div class="card">
+
+<h2>Результаты</h2>
 
 <table>
 
@@ -249,12 +342,14 @@ html += `
 </button>
 
 </div>
+
 </div>
 `;
 
 document.body.innerHTML = html;
 
 }
+
 
 const rawQuestions = [
 
