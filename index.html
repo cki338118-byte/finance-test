@@ -91,14 +91,27 @@
 
     .screen-top {
       display: flex;
-      align-items: center;
+      align-items: flex-start; /* Прижимает элементы к верху */
       justify-content: space-between;
       gap: 12px;
       margin-bottom: 12px;
     }
 
     .screen-top .left { flex: 1; min-width: 0; }
-    .screen-top .right { width: auto; flex: 0 0 auto; display: flex; gap: 10px; }
+    
+    .screen-top .right { 
+      display: flex; 
+      gap: 10px; 
+      justify-content: flex-end; /* Прижимает кнопки к правому краю */
+      flex-wrap: wrap;
+    }
+    
+    .screen-top .right button {
+      width: auto;
+      padding: 10px 15px; /* Делаем кнопки в углу чуть компактнее */
+      margin-top: 0;
+    }
+
     .screen-top .title-left { text-align: left; margin: 0; }
     .screen-top .subtitle-left { text-align: left; margin: 4px 0 0 0; color: var(--muted); font-size: 14px; }
 
@@ -224,8 +237,8 @@
       .card { padding: 18px; border-radius: 16px; }
       .grid { grid-template-columns: 1fr; }
       .screen-top { flex-direction: column; align-items: stretch; }
-      .screen-top .right { width: 100%; flex: 1 1 auto; justify-content: stretch; }
-      .screen-top .right button { flex: 1; }
+      .screen-top .right { justify-content: flex-end; }
+      .screen-top .right button { flex: 1; margin-top: 10px; }
       #question { font-size: 21px; }
       .result-score { font-size: 36px; }
     }
@@ -252,7 +265,7 @@
     const screenResult = document.getElementById('screen-result');
     const screenAdmin = document.getElementById('screen-admin');
 
-    // Сохраняем текущую открытую вкладку админа, чтобы после обновления таблицы оставаться на ней
+    // Сохраняем текущую открытую вкладку админа
     let currentAdminTab = 'subjects';
 
     const TEST_TITLES = {
@@ -355,7 +368,7 @@
         state.currentUser.password = newPassword.trim();
         setSavedUser(state.currentUser);
         
-        // Если это админ, обновляем панель, чтобы новый пароль отобразился в таблице
+        // Если это админ, обновляем панель
         if (state.currentUser.role === 'admin') {
           openAdminPanel();
         }
@@ -494,7 +507,7 @@
         </tr>
       `).join('');
 
-      // Генерация таблицы пользователей (ТЕПЕРЬ С ПАРОЛЯМИ)
+      // Генерация таблицы пользователей (ВКЛЮЧАЯ ПАРОЛЬ)
       const userRows = users.length
         ? users.map(user => `
             <tr>
@@ -816,12 +829,17 @@
     }
 
     function logout() {
+      // Добавлено окно подтверждения выхода
+      if (!confirm('Вы уверены, что хотите выйти из системы?')) return;
+      
       clearSavedUser();
       state.currentUser = null;
       state.currentTestKey = null;
       state.questions = [];
       state.currentIndex = 0;
       state.score = 0;
+      state.wrongQuestions = [];
+      state.isRepeatMode = false;
       renderLogin();
     }
 
@@ -982,7 +1000,6 @@
       const [usersResponse, resultsResponse, accessResponse] = await Promise.all([
         supabaseClient.from('users').select('*').order('id', { ascending: true }),
         supabaseClient.from('results').select('*').order('id', { ascending: false }),
-        // Дополнительно: получаем только те доступы, которые актуальны (конец больше или равно текущему времени)
         supabaseClient.from('test_access').select('*').gte('end_time', now).order('id', { ascending: false })
       ]);
 
