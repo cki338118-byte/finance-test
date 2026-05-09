@@ -265,16 +265,7 @@
       finance: 'Финансы'
     };
 
-    const tests = {
-      personal_finance: [{ q: 'Что такое ликвидность?', a: ['Способность быстро превратить актив в деньги', 'Тип кредита', 'Форма налога', 'Вид страховки'], c: 0 }],
-      portfolio_theory: [{ q: 'Что такое диверсификация?', a: ['Распределение активов', 'Тип кредита', 'Форма налога', 'Метод аудита'], c: 0 }],
-      econometrics: [{ q: 'Что изучает эконометрика?', a: ['Экономические модели и данные', 'Только бухгалтерию', 'Налоги', 'Маркетинг'], c: 0 }],
-      bank_accounting: [{ q: 'Что отражает актив банка?', a: ['Ресурсы банка', 'Только прибыль', 'Налоги', 'Устав'], c: 0 }],
-      bank_accounting_records: [{ q: 'Что такое бухгалтерская проводка?', a: ['Запись операции', 'Вид кредита', 'Тип депозита', 'Форма маркетинга'], c: 0 }],
-      green_economy: [{ q: 'Что такое зеленая экономика?', a: ['Экологически устойчивое развитие', 'Тип банка', 'Вид кредита', 'Метод учета'], c: 0 }],
-      money_and_banks: [{ q: 'Главная функция Центрального банка?', a: ['Монетарная политика', 'Продажа товаров', 'Страхование', 'Маркетинг'], c: 0 }],
-      finance: [{ q: 'Что такое инфляция?', a: ['Рост цен', 'Снижение зарплат', 'Рост налогов', 'Укрепление валюты'], c: 0 }]
-    };
+    
 
     const state = {
       currentUser: null,
@@ -663,14 +654,24 @@
       }
     }
 
-    function startTest(testKey) {
-      if (!tests[testKey]) {
-        alert('Тест не найден');
+    async function startTest(testKey) {
+      // Показываем пользователю, что идет загрузка (чтобы не думал, что зависло)
+      document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px;">Загрузка вопросов...</h2>';
+
+      // Скачиваем вопросы для конкретного предмета из Supabase
+      const { data, error } = await supabaseClient
+        .from('questions')
+        .select('*')
+        .eq('test_key', testKey);
+
+      if (error || !data || data.length === 0) {
+        alert('Вопросы для этого предмета еще не добавлены в базу!');
+        renderSelection(); // Возвращаем в меню
         return;
       }
 
       state.currentTestKey = testKey;
-      state.questions = shuffleArray(tests[testKey].map(cloneQuestion));
+      state.questions = shuffleArray(data.map(cloneQuestion));
       state.currentIndex = 0;
       state.score = 0;
       state.wrongQuestions = [];
@@ -678,6 +679,7 @@
 
       renderQuizShell();
       loadQuestion();
+    }
     }
 
     function loadQuestion() {
