@@ -748,7 +748,6 @@ return titles[key] || 'Тест';
 function showTestSelection(){
 
 let html = `
-<div class="container">
 
 <div class="card">
 
@@ -794,10 +793,9 @@ style="background:#dc3545;">
 
 </div>
 
-</div>
 `;
 
-document.body.innerHTML = html;
+document.querySelector('.container').innerHTML = html;
 
 }
 function loadQuestion(){
