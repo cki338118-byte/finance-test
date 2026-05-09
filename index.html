@@ -699,7 +699,82 @@ screenSelection.innerHTML = html;
             <button class="btn-bad" onclick="logout()">🚪 Выйти</button>
           </div>
         </div>
+<div class="admin-section card"
+style="box-shadow:none; margin-top:0; padding:0;">
 
+<h2>Открыть доступ</h2>
+
+<select id="access-test">
+
+<option value="personal_finance">
+Персональные финансы
+</option>
+
+<option value="portfolio_theory">
+Теория портфеля
+</option>
+
+<option value="econometrics">
+Эконометрика
+</option>
+
+<option value="bank_accounting">
+Бухгалтерия в банке
+</option>
+
+<option value="bank_accounting_records">
+Бухгалтерский учет в банке
+</option>
+
+<option value="green_economy">
+Зеленая экономика
+</option>
+
+<option value="money_and_banks">
+Деньги и банки
+</option>
+
+<option value="finance">
+Финансы
+</option>
+
+</select>
+
+<input
+id="access-username"
+placeholder="Логин студента">
+
+<label style="display:block;margin-top:15px;">
+Начало
+</label>
+
+<input
+id="access-start"
+type="datetime-local">
+
+<label style="display:block;margin-top:15px;">
+Конец
+</label>
+
+<input
+id="access-end"
+type="datetime-local">
+
+<input
+id="access-attempts"
+type="number"
+placeholder="Лимит попыток"
+value="1">
+
+<button
+class="btn-ok"
+onclick="grantAccess()">
+
+Открыть доступ
+
+</button>
+
+</div>
         <div class="admin-section card" style="box-shadow:none; margin-top:0; padding:0;">
           <h2>Создать пользователя</h2>
           <input id="new-username" placeholder="Логин" autocomplete="off" />
@@ -920,6 +995,80 @@ screenSelection.innerHTML = html;
       renderLogin();
     }
 
+  async function grantAccess(){
+
+const testKey =
+document.getElementById(
+'access-test'
+).value;
+
+const username =
+document.getElementById(
+'access-username'
+).value.trim();
+
+const start =
+document.getElementById(
+'access-start'
+).value;
+
+const end =
+document.getElementById(
+'access-end'
+).value;
+
+const attempts =
+parseInt(
+document.getElementById(
+'access-attempts'
+).value
+);
+
+if(
+!username ||
+!start ||
+!end
+){
+
+alert(
+'Заполните поля'
+);
+
+return;
+
+}
+
+const { error } =
+await supabaseClient
+.from('test_access')
+.insert([
+{
+username:username,
+test_key:testKey,
+start_time:start,
+end_time:end,
+attempt_limit:attempts,
+is_active:true
+}
+]);
+
+if(error){
+
+console.log(error);
+
+alert(
+'Ошибка выдачи доступа'
+);
+
+return;
+
+}
+
+alert(
+'Доступ открыт'
+);
+
+}
     async function createUser() {
       const username = document.getElementById('new-username').value.trim();
       const password = document.getElementById('new-password').value.trim();
