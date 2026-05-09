@@ -1002,10 +1002,14 @@ document.getElementById(
 'access-test'
 ).value;
 
-const username =
+const usernames =
 document.getElementById(
 'access-username'
-).value.trim();
+)
+.value
+.split(',')
+.map(v=>v.trim())
+.filter(v=>v);
 
 const start =
 document.getElementById(
