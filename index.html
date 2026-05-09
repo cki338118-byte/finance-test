@@ -264,6 +264,56 @@
     .admin-head button {
       width: auto;
       flex: 1 1 220px;
+    .students-list{
+
+display:flex;
+flex-direction:column;
+gap:10px;
+
+padding:15px;
+
+border:1px solid #dbe3ea;
+border-radius:12px;
+
+margin-bottom:15px;
+
+max-height:250px;
+overflow:auto;
+
+background:white;
+
+}
+
+.student-item{
+
+display:flex;
+align-items:center;
+gap:10px;
+
+padding:10px;
+
+border-radius:10px;
+
+cursor:pointer;
+
+transition:.2s;
+
+}
+
+.student-item:hover{
+
+background:#f4f7fb;
+
+}
+
+.student-checkbox{
+
+width:18px;
+height:18px;
+
+cursor:pointer;
+
+}
     }
 
     @media (max-width: 720px) {
@@ -740,9 +790,13 @@ style="box-shadow:none; margin-top:0; padding:0;">
 
 </select>
 
-<input
-id="access-username"
-placeholder="Логин студента">
+<div
+id="students-list"
+class="students-list">
+
+Загрузка студентов...
+
+</div>
 
 <label style="display:block;margin-top:15px;">
 Начало
@@ -818,6 +872,7 @@ onclick="grantAccess()">
           </div>
         </div>
       `;
+    loadStudentsList();
     }
 
     async function handleLogin() {
@@ -995,6 +1050,54 @@ onclick="grantAccess()">
       renderLogin();
     }
 
+ async function loadStudentsList(){
+
+const container =
+document.getElementById(
+'students-list'
+);
+
+if(!container) return;
+
+const { data, error } =
+await supabaseClient
+.from('users')
+.select('*')
+.neq('role', 'admin');
+
+if(error){
+
+container.innerHTML =
+'Ошибка загрузки';
+
+return;
+
+}
+
+let html = '';
+
+data.forEach(user=>{
+
+html += `
+<label class="student-item">
+
+<input
+type="checkbox"
+value="${user.username}"
+class="student-checkbox">
+
+<span>
+${user.username}
+</span>
+
+</label>
+`;
+
+});
+
+container.innerHTML = html;
+
+}
   async function grantAccess(){
 
 const testKey =
@@ -1003,13 +1106,12 @@ document.getElementById(
 ).value;
 
 const usernames =
-document.getElementById(
-'access-username'
+[
+...document.querySelectorAll(
+'.student-checkbox:checked'
 )
-.value
-.split(',')
-.map(v=>v.trim())
-.filter(v=>v);
+]
+.map(cb=>cb.value);
 
 const start =
 document.getElementById(
@@ -1029,7 +1131,7 @@ document.getElementById(
 );
 
 if(
-!username ||
+!usernames.length ||
 !start ||
 !end
 ){
@@ -1042,19 +1144,20 @@ return;
 
 }
 
-const { error } =
-await supabaseClient
-.from('test_access')
-.insert([
-{
+const rows =
+usernames.map(username=>({
 username:username,
 test_key:testKey,
 start_time:start,
 end_time:end,
 attempt_limit:attempts,
 is_active:true
-}
-]);
+}));
+
+const { error } =
+await supabaseClient
+.from('test_access')
+.insert(rows);
 
 if(error){
 
