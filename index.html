@@ -675,6 +675,25 @@ return;
 
 }
 
+showTestSelection();
+
+};
+
+function startTest(testKey){
+
+currentTest = testKey;
+
+questions =
+shuffleArray(
+tests[testKey]
+);
+
+currentIndex = 0;
+
+score = 0;
+
+wrongQuestions = [];
+
 document
 .getElementById('login-card')
 .classList.add('hidden');
@@ -683,12 +702,105 @@ document
 .getElementById('quiz-card')
 .classList.remove('hidden');
 
+document.querySelector(
+'#quiz-card h1'
+).innerText =
+getTestTitle(testKey);
+
 loadQuestion();
+
+}
+
+function getTestTitle(key){
+
+const titles = {
+
+personal_finance:
+'Персональные финансы',
+
+portfolio_theory:
+'Теория портфеля',
+
+econometrics:
+'Эконометрика',
+
+bank_accounting:
+'Бухгалтерия в банке',
+
+bank_accounting_records:
+'Бухгалтерский учет в банке',
+
+green_economy:
+'Зеленая экономика',
+
+money_and_banks:
+'Деньги и банки',
+
+finance:
+'Финансы'
 
 };
 
-function loadQuestion(){
+return titles[key] || 'Тест';
 
+}
+
+function showTestSelection(){
+
+let html = `
+<div class="container">
+
+<div class="card">
+
+<h1>Выберите тест</h1>
+
+<button onclick="startTest('personal_finance')">
+Персональные финансы
+</button>
+
+<button onclick="startTest('portfolio_theory')">
+Теория портфеля
+</button>
+
+<button onclick="startTest('econometrics')">
+Эконометрика
+</button>
+
+<button onclick="startTest('bank_accounting')">
+Бухгалтерия в банке
+</button>
+
+<button onclick="startTest('bank_accounting_records')">
+Бухгалтерский учет в банке
+</button>
+
+<button onclick="startTest('green_economy')">
+Зеленая экономика
+</button>
+
+<button onclick="startTest('money_and_banks')">
+Деньги и банки
+</button>
+
+<button onclick="startTest('finance')">
+Финансы
+</button>
+
+<button
+onclick="logout()"
+style="background:#dc3545;">
+🚪 Выйти
+</button>
+
+</div>
+
+</div>
+`;
+
+document.body.innerHTML = html;
+
+}
+function loadQuestion(){
 const q =
 questions[currentIndex];
 
@@ -820,7 +932,7 @@ await supabaseClient
 username:
 currentUser.username,
 
-test_name:'Финансы',
+test_name:getTestTitle(currentTest),
 
 score:score,
 
@@ -907,15 +1019,7 @@ openAdminPanel();
 
 }else{
 
-document
-.getElementById('login-card')
-.classList.add('hidden');
-
-document
-.getElementById('quiz-card')
-.classList.remove('hidden');
-
-loadQuestion();
+showTestSelection();
 
 }
 
