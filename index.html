@@ -88,7 +88,6 @@
     .btn-ok { background: var(--ok); }
     .btn-bad { background: var(--bad); }
     .btn-gray { background: #e9eef5; color: var(--text); }
-    .btn-dark { background: #24303f; }
 
     .screen-top {
       display: flex;
@@ -98,27 +97,10 @@
       margin-bottom: 12px;
     }
 
-    .screen-top .left {
-      flex: 1;
-      min-width: 0;
-    }
-
-    .screen-top .right {
-      width: 160px;
-      flex: 0 0 160px;
-    }
-
-    .screen-top .title-left {
-      text-align: left;
-      margin: 0;
-    }
-
-    .screen-top .subtitle-left {
-      text-align: left;
-      margin: 4px 0 0 0;
-      color: var(--muted);
-      font-size: 14px;
-    }
+    .screen-top .left { flex: 1; min-width: 0; }
+    .screen-top .right { width: 160px; flex: 0 0 160px; }
+    .screen-top .title-left { text-align: left; margin: 0; }
+    .screen-top .subtitle-left { text-align: left; margin: 4px 0 0 0; color: var(--muted); font-size: 14px; }
 
     .progress {
       width: 100%;
@@ -136,20 +118,8 @@
       transition: width .25s ease;
     }
 
-    #counter {
-      color: var(--muted);
-      margin-bottom: 8px;
-      text-align: left;
-      font-size: 14px;
-    }
-
-    #question {
-      font-size: 24px;
-      font-weight: 700;
-      margin-bottom: 18px;
-      line-height: 1.35;
-      white-space: pre-wrap;
-    }
+    #counter { color: var(--muted); margin-bottom: 8px; text-align: left; font-size: 14px; }
+    #question { font-size: 24px; font-weight: 700; margin-bottom: 18px; line-height: 1.35; white-space: pre-wrap; }
 
     .option {
       background: #eef2f7;
@@ -164,15 +134,8 @@
       width: 100%;
     }
 
-    .option:hover {
-      background: #dbe7ff;
-      border-color: #c8d5ef;
-    }
-
-    .option:disabled {
-      cursor: default;
-      opacity: .96;
-    }
+    .option:hover { background: #dbe7ff; border-color: #c8d5ef; }
+    .option:disabled { cursor: default; opacity: .96; }
 
     .correct {
       background: rgba(40,167,69,.12) !important;
@@ -180,7 +143,6 @@
       border-color: rgba(40,167,69,.35) !important;
       font-weight: 700;
     }
-
     .wrong {
       background: rgba(220,53,69,.12) !important;
       color: #8c1e2b !important;
@@ -188,83 +150,45 @@
       font-weight: 700;
     }
 
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-    }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .small-note { text-align: center; color: var(--muted); font-size: 14px; margin-top: 6px; }
+    .result-score { text-align: center; font-size: 44px; font-weight: 800; color: var(--primary); margin: 10px 0 6px 0; }
+    .result-meta { text-align: center; color: var(--muted); margin-top: 6px; margin-bottom: 12px; }
 
-    .small-note {
-      text-align: center;
-      color: var(--muted);
-      font-size: 14px;
-      margin-top: 6px;
-    }
+    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; justify-content: center; }
+    .toolbar button { width: auto; flex: 1 1 180px; max-width: 300px; }
 
-    .result-score {
-      text-align: center;
-      font-size: 44px;
-      font-weight: 800;
-      color: var(--primary);
-      margin: 10px 0 6px 0;
-    }
+    table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+    th, td { border: 1px solid #dfe5ee; padding: 12px; text-align: center; vertical-align: middle; }
+    th { background: var(--primary); color: #fff; }
+    .table-wrap { overflow-x: auto; }
 
-    .result-meta {
-      text-align: center;
-      color: var(--muted);
-      margin-top: 6px;
-      margin-bottom: 12px;
-    }
+    .admin-section { margin-top: 18px; }
 
-    .toolbar {
+    /* Tabs CSS */
+    .admin-tabs {
       display: flex;
       gap: 10px;
-      flex-wrap: wrap;
-      margin-top: 16px;
+      margin-bottom: 20px;
+      border-bottom: 2px solid #e9eef5;
+      padding-bottom: 10px;
+      overflow-x: auto;
     }
-
-    .toolbar button {
+    .tab-btn {
+      background: #f4f7f6;
+      color: var(--text);
+      padding: 12px 20px;
+      border-radius: 8px;
+      margin: 0;
       width: auto;
-      flex: 1 1 180px;
+      flex: none;
     }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 18px;
-    }
-
-    th, td {
-      border: 1px solid #dfe5ee;
-      padding: 12px;
-      text-align: center;
-      vertical-align: middle;
-    }
-
-    th {
+    .tab-btn.active {
       background: var(--primary);
       color: #fff;
     }
-
-    .table-wrap {
-      overflow-x: auto;
-    }
-
-    .admin-section {
-      margin-top: 18px;
-    }
-
-    .admin-head {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin-bottom: 10px;
-    }
-
-    .admin-head button {
-      width: auto;
-      flex: 1 1 220px;
-    }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
 
     .students-list {
       display: flex;
@@ -273,6 +197,7 @@
       padding: 15px;
       border: 1px solid #dbe3ea;
       border-radius: 12px;
+      margin-top: 15px;
       margin-bottom: 15px;
       max-height: 250px;
       overflow: auto;
@@ -290,43 +215,18 @@
       text-align: left;
       color: var(--text);
     }
-
-    .student-item:hover {
-      background: #f4f7fb;
-    }
-
-    .student-checkbox {
-      width: 18px;
-      height: 18px;
-      cursor: pointer;
-      margin: 0;
-      flex: 0 0 auto;
-    }
-
-    .access-note {
-      font-size: 14px;
-      color: var(--muted);
-      margin-top: 8px;
-      text-align: center;
-    }
+    .student-item:hover { background: #f4f7fb; }
+    .student-checkbox { width: 18px; height: 18px; cursor: pointer; margin: 0; flex: 0 0 auto; }
+    .access-note { font-size: 14px; color: var(--muted); margin-top: 8px; text-align: center; }
 
     @media (max-width: 720px) {
       .container { padding: 14px; }
       .card { padding: 18px; border-radius: 16px; }
       .grid { grid-template-columns: 1fr; }
-      .screen-top {
-        flex-direction: column;
-        align-items: stretch;
-      }
-      .screen-top .right {
-        width: 100%;
-        flex: 1 1 auto;
-      }
+      .screen-top { flex-direction: column; align-items: stretch; }
+      .screen-top .right { width: 100%; flex: 1 1 auto; }
       #question { font-size: 21px; }
       .result-score { font-size: 36px; }
-      .toolbar button {
-        flex: 1 1 100%;
-      }
     }
   </style>
 </head>
@@ -351,6 +251,9 @@
     const screenResult = document.getElementById('screen-result');
     const screenAdmin = document.getElementById('screen-admin');
 
+    // Сохраняем текущую открытую вкладку админа, чтобы после обновления таблицы оставаться на ней
+    let currentAdminTab = 'subjects';
+
     const TEST_TITLES = {
       personal_finance: 'Персональные финансы',
       portfolio_theory: 'Теория портфеля',
@@ -363,102 +266,14 @@
     };
 
     const tests = {
-      personal_finance: [
-        {
-          q: 'Что такое ликвидность?',
-          a: [
-            'Способность быстро превратить актив в деньги',
-            'Тип кредита',
-            'Форма налога',
-            'Вид страховки'
-          ],
-          c: 0
-        }
-      ],
-      portfolio_theory: [
-        {
-          q: 'Что такое диверсификация?',
-          a: [
-            'Распределение активов',
-            'Тип кредита',
-            'Форма налога',
-            'Метод аудита'
-          ],
-          c: 0
-        }
-      ],
-      econometrics: [
-        {
-          q: 'Что изучает эконометрика?',
-          a: [
-            'Экономические модели и данные',
-            'Только бухгалтерию',
-            'Налоги',
-            'Маркетинг'
-          ],
-          c: 0
-        }
-      ],
-      bank_accounting: [
-        {
-          q: 'Что отражает актив банка?',
-          a: [
-            'Ресурсы банка',
-            'Только прибыль',
-            'Налоги',
-            'Устав'
-          ],
-          c: 0
-        }
-      ],
-      bank_accounting_records: [
-        {
-          q: 'Что такое бухгалтерская проводка?',
-          a: [
-            'Запись операции',
-            'Вид кредита',
-            'Тип депозита',
-            'Форма маркетинга'
-          ],
-          c: 0
-        }
-      ],
-      green_economy: [
-        {
-          q: 'Что такое зеленая экономика?',
-          a: [
-            'Экологически устойчивое развитие',
-            'Тип банка',
-            'Вид кредита',
-            'Метод учета'
-          ],
-          c: 0
-        }
-      ],
-      money_and_banks: [
-        {
-          q: 'Главная функция Центрального банка?',
-          a: [
-            'Монетарная политика',
-            'Продажа товаров',
-            'Страхование',
-            'Маркетинг'
-          ],
-          c: 0
-        }
-      ],
-      finance: [
-        {
-          q: 'Что такое инфляция?',
-          a: [
-            'Рост цен',
-            'Снижение зарплат',
-            'Рост налогов',
-            'Укрепление валюты'
-          ],
-          c: 0
-        }
-      ]
+      personal_finance: [{ q: 'Что такое ликвидность?', a: ['Способность быстро превратить актив в деньги', 'Тип кредита', 'Форма налога', 'Вид страховки'], c: 0 }],
+      portfolio_theory: [{ q: 'Что такое диверсификация?', a: ['Распределение активов', 'Тип кредита', 'Форма налога', 'Метод аудита'], c: 0 }],
+      econometrics: [{ q: 'Что изучает эконометрика?', a: ['Экономические модели и данные', 'Только бухгалтерию', 'Налоги', 'Маркетинг'], c: 0 }],
+      bank_accounting: [{ q: 'Что отражает актив банка?', a: ['Ресурсы банка', 'Только прибыль', 'Налоги', 'Устав'], c: 0 }],
+      bank_accounting_records: [{ q: 'Что такое бухгалтерская проводка?', a: ['Запись операции', 'Вид кредита', 'Тип депозита', 'Форма маркетинга'], c: 0 }],
+      green_economy: [{ q: 'Что такое зеленая экономика?', a: ['Экологически устойчивое развитие', 'Тип банка', 'Вид кредита', 'Метод учета'], c: 0 }],
+      money_and_banks: [{ q: 'Главная функция Центрального банка?', a: ['Монетарная политика', 'Продажа товаров', 'Страхование', 'Маркетинг'], c: 0 }],
+      finance: [{ q: 'Что такое инфляция?', a: ['Рост цен', 'Снижение зарплат', 'Рост налогов', 'Укрепление валюты'], c: 0 }]
     };
 
     const state = {
@@ -466,8 +281,7 @@
       currentTestKey: null,
       questions: [],
       currentIndex: 0,
-      score: 0,
-      wrongQuestions: []
+      score: 0
     };
 
     function escapeHtml(value) {
@@ -534,7 +348,6 @@
 
     async function renderSelection() {
       showScreen('screen-selection');
-
       const now = new Date().toISOString();
 
       const { data, error } = await supabaseClient
@@ -610,15 +423,10 @@
       const percent = total ? Math.round((state.score / total) * 100) : 0;
 
       let text = 'Результат сохранён.';
-      if (percent >= 90) {
-        text = 'Отличный результат.';
-      } else if (percent >= 70) {
-        text = 'Хороший результат.';
-      } else if (percent >= 50) {
-        text = 'Неплохо, но есть что подтянуть.';
-      } else {
-        text = 'Лучше пройти тест ещё раз после повторения материала.';
-      }
+      if (percent >= 90) text = 'Отличный результат.';
+      else if (percent >= 70) text = 'Хороший результат.';
+      else if (percent >= 50) text = 'Неплохо, но есть что подтянуть.';
+      else text = 'Вам следует повторить материал.';
 
       screenResult.innerHTML = `
         <div class="screen-top">
@@ -637,23 +445,36 @@
 
         <div class="toolbar">
           <button class="btn-gray" onclick="backToSelection()">К выбору тестов</button>
-          <button id="repeat-wrong-btn" class="btn-ok" onclick="repeatWrong()">Повторить ошибки (${state.wrongQuestions.length})</button>
         </div>
-
-        <div class="small-note">Если ошибок нет, кнопка повторения просто ничего не запустит.</div>
       `;
+    }
 
-      if (!state.wrongQuestions.length) {
-        const btn = document.getElementById('repeat-wrong-btn');
-        btn.disabled = true;
-        btn.style.opacity = '0.55';
-        btn.style.pointerEvents = 'none';
+    // Вспомогательная функция для переключения вкладок
+    function switchAdminTab(tabId) {
+      currentAdminTab = tabId;
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+      
+      const btn = document.getElementById('btn-' + tabId);
+      const content = document.getElementById('tab-' + tabId);
+      if(btn && content) {
+        btn.classList.add('active');
+        content.classList.add('active');
       }
     }
 
     function renderAdminPanel(users = [], results = [], accesses = []) {
       showScreen('screen-admin');
 
+      // Генерация таблицы предметов
+      const subjectRows = Object.keys(TEST_TITLES).map(key => `
+        <tr>
+          <td>${escapeHtml(TEST_TITLES[key])}</td>
+          <td><code>${escapeHtml(key)}</code></td>
+        </tr>
+      `).join('');
+
+      // Генерация таблицы пользователей
       const userRows = users.length
         ? users.map(user => `
             <tr>
@@ -667,6 +488,7 @@
           `).join('')
         : `<tr><td colspan="4">Пользователей пока нет</td></tr>`;
 
+      // Генерация таблицы доступов
       const accessRows = accesses.length
         ? accesses.map(row => `
             <tr>
@@ -674,14 +496,14 @@
               <td>${escapeHtml(getTestTitle(row.test_key))}</td>
               <td>${new Date(row.start_time).toLocaleString()}</td>
               <td>${new Date(row.end_time).toLocaleString()}</td>
-              <td>${escapeHtml(row.attempt_limit ?? 1)}</td>
               <td>
                 <button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteAccess(${row.id})">❌</button>
               </td>
             </tr>
           `).join('')
-        : `<tr><td colspan="6">Нет активных доступов</td></tr>`;
+        : `<tr><td colspan="5">Нет активных доступов</td></tr>`;
 
+      // Генерация таблицы результатов
       const resultRows = results.length
         ? results.map(row => `
             <tr>
@@ -706,95 +528,80 @@
           </div>
         </div>
 
-        <div class="admin-section card" style="box-shadow:none; margin-top:0; padding:0;">
-          <h2>Открыть доступ</h2>
-
-          <select id="access-test">
-            <option value="personal_finance">Персональные финансы</option>
-            <option value="portfolio_theory">Теория портфеля</option>
-            <option value="econometrics">Эконометрика</option>
-            <option value="bank_accounting">Бухгалтерия в банке</option>
-            <option value="bank_accounting_records">Бухгалтерский учет в банке</option>
-            <option value="green_economy">Зеленая экономика</option>
-            <option value="money_and_banks">Деньги и банки</option>
-            <option value="finance">Финансы</option>
-          </select>
-
-          <div id="students-list" class="students-list">Загрузка студентов...</div>
-
-          <label style="display:block;margin-top:15px;">Начало</label>
-          <input id="access-start" type="datetime-local">
-
-          <label style="display:block;margin-top:15px;">Конец</label>
-          <input id="access-end" type="datetime-local">
-
-          <input
-            id="access-attempts"
-            type="number"
-            placeholder="Лимит попыток"
-            value="1"
-            min="1"
-          >
-
-          <button class="btn-ok" onclick="grantAccess()">Открыть доступ</button>
-          <div class="access-note">Выберите одного или нескольких студентов галочками.</div>
+        <div class="admin-tabs">
+          <button id="btn-subjects" class="tab-btn" onclick="switchAdminTab('subjects')">Предметы</button>
+          <button id="btn-students" class="tab-btn" onclick="switchAdminTab('students')">Студенты</button>
+          <button id="btn-exams" class="tab-btn" onclick="switchAdminTab('exams')">Экзамены</button>
+          <button id="btn-results" class="tab-btn" onclick="switchAdminTab('results')">Результаты</button>
         </div>
 
-        <div class="admin-section card" style="box-shadow:none; margin-top:0; padding:0;">
-          <h2>Создать пользователя</h2>
-          <input id="new-username" placeholder="Логин" autocomplete="off" />
-          <input id="new-password" placeholder="Пароль" autocomplete="off" />
-          <select id="new-role">
-            <option value="student">student</option>
-            <option value="admin">admin</option>
-          </select>
-          <button class="btn-ok" onclick="createUser()">Создать пользователя</button>
-        </div>
-
-        <div class="admin-section">
-          <h2>Пользователи</h2>
+        <!-- Вкладка Предметы -->
+        <div id="tab-subjects" class="tab-content admin-section">
+          <h2>Список тестовых предметов</h2>
           <div class="table-wrap">
             <table>
-              <tr>
-                <th>ID</th>
-                <th>Логин</th>
-                <th>Роль</th>
-                <th>Удалить</th>
-              </tr>
+              <tr><th>Название</th><th>Системный ключ</th></tr>
+              ${subjectRows}
+            </table>
+          </div>
+        </div>
+
+        <!-- Вкладка Студенты -->
+        <div id="tab-students" class="tab-content admin-section">
+          <div class="card" style="box-shadow:none; margin-top:0; padding:0; margin-bottom: 20px;">
+            <h2>Создать пользователя</h2>
+            <input id="new-username" placeholder="Логин" autocomplete="off" />
+            <input id="new-password" placeholder="Пароль" autocomplete="off" />
+            <select id="new-role">
+              <option value="student">student (Студент)</option>
+              <option value="admin">admin (Админ)</option>
+            </select>
+            <button class="btn-ok" onclick="createUser()">Создать</button>
+          </div>
+          <h2>Список пользователей</h2>
+          <div class="table-wrap">
+            <table>
+              <tr><th>ID</th><th>Логин</th><th>Роль</th><th>Удалить</th></tr>
               ${userRows}
             </table>
           </div>
         </div>
 
-        <div class="admin-section">
+        <!-- Вкладка Экзамены -->
+        <div id="tab-exams" class="tab-content admin-section">
+          <div class="card" style="box-shadow:none; margin-top:0; padding:0; margin-bottom: 20px;">
+            <h2>Открыть доступ</h2>
+            <select id="access-test">
+              ${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
+            </select>
+
+            <div id="students-list" class="students-list">Загрузка студентов...</div>
+
+            <label style="display:block;margin-top:15px;">Начало доступа</label>
+            <input id="access-start" type="datetime-local">
+
+            <label style="display:block;margin-top:15px;">Конец доступа</label>
+            <input id="access-end" type="datetime-local">
+
+            <button class="btn-ok" onclick="grantAccess()">Открыть доступ</button>
+            <div class="access-note">Выберите одного или нескольких студентов. Попытки не ограничены.</div>
+          </div>
+          
           <h2>Активные доступы</h2>
           <div class="table-wrap">
             <table>
-              <tr>
-                <th>Студент</th>
-                <th>Предмет</th>
-                <th>Начало</th>
-                <th>Конец</th>
-                <th>Попытки</th>
-                <th>Удалить</th>
-              </tr>
+              <tr><th>Студент</th><th>Предмет</th><th>Начало</th><th>Конец</th><th>Удалить</th></tr>
               ${accessRows}
             </table>
           </div>
         </div>
 
-        <div class="admin-section">
-          <h2>Результаты</h2>
+        <!-- Вкладка Результаты -->
+        <div id="tab-results" class="tab-content admin-section">
+          <h2>Результаты тестов</h2>
           <div class="table-wrap">
             <table>
-              <tr>
-                <th>ID</th>
-                <th>Пользователь</th>
-                <th>Тест</th>
-                <th>Баллы</th>
-                <th>%</th>
-                <th>Удалить</th>
-              </tr>
+              <tr><th>ID</th><th>Пользователь</th><th>Тест</th><th>Баллы</th><th>%</th><th>Удалить</th></tr>
               ${resultRows}
             </table>
           </div>
@@ -802,6 +609,7 @@
       `;
 
       loadStudentsList();
+      switchAdminTab(currentAdminTab); // Восстанавливаем открытую вкладку
     }
 
     async function handleLogin() {
@@ -845,7 +653,6 @@
       state.questions = shuffleArray(tests[testKey].map(cloneQuestion));
       state.currentIndex = 0;
       state.score = 0;
-      state.wrongQuestions = [];
 
       renderQuizShell();
       loadQuestion();
@@ -900,7 +707,6 @@
 
       if (!isCorrect) {
         selectedBtn.classList.add('wrong');
-        state.wrongQuestions.push(cloneQuestion(state.questions[state.currentIndex]));
       } else {
         state.score++;
       }
@@ -910,7 +716,6 @@
 
     function nextQuestion() {
       state.currentIndex++;
-
       if (state.currentIndex < state.questions.length) {
         loadQuestion();
       } else {
@@ -944,27 +749,11 @@
       renderResult();
     }
 
-    function repeatWrong() {
-      if (!state.wrongQuestions.length) {
-        alert('Ошибок нет');
-        return;
-      }
-
-      state.questions = shuffleArray(state.wrongQuestions.map(cloneQuestion));
-      state.currentIndex = 0;
-      state.score = 0;
-      state.wrongQuestions = [];
-
-      renderQuizShell();
-      loadQuestion();
-    }
-
     function backToSelection() {
       state.currentTestKey = null;
       state.questions = [];
       state.currentIndex = 0;
       state.score = 0;
-      state.wrongQuestions = [];
       renderSelection();
     }
 
@@ -975,7 +764,6 @@
       state.questions = [];
       state.currentIndex = 0;
       state.score = 0;
-      state.wrongQuestions = [];
       renderLogin();
     }
 
@@ -1003,15 +791,10 @@
       }
 
       let html = '';
-
       students.forEach(user => {
         html += `
           <label class="student-item">
-            <input
-              type="checkbox"
-              value="${escapeHtml(user.username)}"
-              class="student-checkbox"
-            >
+            <input type="checkbox" value="${escapeHtml(user.username)}" class="student-checkbox">
             <span>${escapeHtml(user.username)}</span>
           </label>
         `;
@@ -1025,10 +808,9 @@
       const usernames = [...document.querySelectorAll('.student-checkbox:checked')].map(cb => cb.value);
       const startRaw = document.getElementById('access-start').value;
       const endRaw = document.getElementById('access-end').value;
-      const attempts = parseInt(document.getElementById('access-attempts').value, 10) || 1;
 
       if (!usernames.length || !startRaw || !endRaw) {
-        alert('Заполните поля');
+        alert('Заполните поля (выберите хотя бы одного студента и укажите даты)');
         return;
       }
 
@@ -1036,6 +818,7 @@
       const end = new Date(endRaw).toISOString();
 
       for (const username of usernames) {
+        // Удаляем старый доступ к этому же предмету (чтобы обновить сроки)
         const { error: deleteError } = await supabaseClient
           .from('test_access')
           .delete()
@@ -1044,7 +827,7 @@
 
         if (deleteError) {
           console.log(deleteError);
-          alert('Ошибка удаления старого доступа');
+          alert('Ошибка обновления доступа');
           return;
         }
 
@@ -1056,7 +839,6 @@
               test_key: testKey,
               start_time: start,
               end_time: end,
-              attempt_limit: attempts,
               is_active: true
             }
           ]);
@@ -1068,7 +850,7 @@
         }
       }
 
-      alert('Доступ открыт');
+      alert('Доступ успешно открыт');
       await openAdminPanel();
     }
 
@@ -1078,15 +860,13 @@
       const role = document.getElementById('new-role').value;
 
       if (!username || !password) {
-        alert('Заполните поля');
+        alert('Заполните логин и пароль');
         return;
       }
 
       const { error } = await supabaseClient
         .from('users')
-        .insert([
-          { username, password, role }
-        ]);
+        .insert([{ username, password, role }]);
 
       if (error) {
         alert('Ошибка создания пользователя');
@@ -1094,61 +874,43 @@
         return;
       }
 
-      await openAdminPanel();
       alert('Пользователь создан');
+      await openAdminPanel();
     }
 
     async function deleteUser(id) {
-      const ok = confirm('Удалить пользователя?');
-      if (!ok) return;
+      if (!confirm('Удалить пользователя?')) return;
 
-      const { error } = await supabaseClient
-        .from('users')
-        .delete()
-        .eq('id', id);
-
+      const { error } = await supabaseClient.from('users').delete().eq('id', id);
       if (error) {
         alert('Ошибка удаления пользователя');
         console.error(error);
         return;
       }
-
       await openAdminPanel();
     }
 
     async function deleteAccess(id) {
-      const ok = confirm('Удалить доступ?');
-      if (!ok) return;
+      if (!confirm('Удалить доступ?')) return;
 
-      const { error } = await supabaseClient
-        .from('test_access')
-        .delete()
-        .eq('id', id);
-
+      const { error } = await supabaseClient.from('test_access').delete().eq('id', id);
       if (error) {
         alert('Ошибка удаления доступа');
         console.error(error);
         return;
       }
-
       await openAdminPanel();
     }
 
     async function deleteResult(id) {
-      const ok = confirm('Удалить результат?');
-      if (!ok) return;
+      if (!confirm('Удалить результат?')) return;
 
-      const { error } = await supabaseClient
-        .from('results')
-        .delete()
-        .eq('id', id);
-
+      const { error } = await supabaseClient.from('results').delete().eq('id', id);
       if (error) {
         alert('Ошибка удаления результата');
         console.error(error);
         return;
       }
-
       await openAdminPanel();
     }
 
