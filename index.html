@@ -930,10 +930,16 @@
     async function openAdminPanel() {
       showScreen('screen-admin');
 
+      const now = new Date().toISOString();
+
+      // АВТОМАТИЧЕСКАЯ ОЧИСТКА: Удаляем доступы, у которых вышло время (дедлайн прошел)
+      await supabaseClient.from('test_access').delete().lt('end_time', now);
+
       const [usersResponse, resultsResponse, accessResponse] = await Promise.all([
         supabaseClient.from('users').select('*').order('id', { ascending: true }),
         supabaseClient.from('results').select('*').order('id', { ascending: false }),
-        supabaseClient.from('test_access').select('*').order('id', { ascending: false })
+        // Дополнительно: получаем только те доступы, которые актуальны (конец больше или равно текущему времени)
+        supabaseClient.from('test_access').select('*').gte('end_time', now).order('id', { ascending: false })
       ]);
 
       const users = usersResponse.data || [];
