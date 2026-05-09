@@ -265,8 +265,6 @@
       finance: 'Финансы'
     };
 
-    
-
     const state = {
       currentUser: null,
       currentTestKey: null,
@@ -533,7 +531,6 @@
           <button id="btn-results" class="tab-btn" onclick="switchAdminTab('results')">Результаты</button>
         </div>
 
-        <!-- Вкладка Предметы -->
         <div id="tab-subjects" class="tab-content admin-section">
           <h2>Список тестовых предметов</h2>
           <div class="table-wrap">
@@ -544,7 +541,6 @@
           </div>
         </div>
 
-        <!-- Вкладка Студенты -->
         <div id="tab-students" class="tab-content admin-section">
           <div class="card" style="box-shadow:none; margin-top:0; padding:0; margin-bottom: 20px;">
             <h2>Создать пользователя</h2>
@@ -565,7 +561,6 @@
           </div>
         </div>
 
-        <!-- Вкладка Экзамены -->
         <div id="tab-exams" class="tab-content admin-section">
           <div class="card" style="box-shadow:none; margin-top:0; padding:0; margin-bottom: 20px;">
             <h2>Открыть доступ</h2>
@@ -600,7 +595,6 @@
           </div>
         </div>
 
-        <!-- Вкладка Результаты -->
         <div id="tab-results" class="tab-content admin-section">
           <h2>Результаты тестов</h2>
           
@@ -654,8 +648,8 @@
     }
 
     async function startTest(testKey) {
-      // Показываем пользователю, что идет загрузка (чтобы не думал, что зависло)
-      document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px;">Загрузка вопросов...</h2>';
+      // Показываем пользователю, что идет загрузка
+      document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px; text-align:center;">Загрузка вопросов...</h2>';
 
       // Скачиваем вопросы для конкретного предмета из Supabase
       const { data, error } = await supabaseClient
@@ -678,7 +672,6 @@
 
       renderQuizShell();
       loadQuestion();
-    }
     }
 
     function loadQuestion() {
