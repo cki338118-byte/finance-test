@@ -488,10 +488,10 @@
           `).join('')
         : `<tr><td colspan="4">Пользователей пока нет</td></tr>`;
 
-      // Генерация таблицы доступов
+      // Генерация таблицы доступов (С ФИЛЬТРОМ)
       const accessRows = accesses.length
         ? accesses.map(row => `
-            <tr>
+            <tr class="access-row" data-test="${row.test_key}">
               <td>${escapeHtml(row.username)}</td>
               <td>${escapeHtml(getTestTitle(row.test_key))}</td>
               <td>${new Date(row.start_time).toLocaleString()}</td>
@@ -503,10 +503,12 @@
           `).join('')
         : `<tr><td colspan="5">Нет активных доступов</td></tr>`;
 
-      // Генерация таблицы результатов
+      // Генерация таблицы результатов (С ФИЛЬТРОМ)
       const resultRows = results.length
-        ? results.map(row => `
-            <tr>
+        ? results.map(row => {
+            const testKey = Object.keys(TEST_TITLES).find(k => TEST_TITLES[k] === row.test_name) || 'unknown';
+            return `
+            <tr class="result-row" data-test="${testKey}">
               <td>${escapeHtml(row.id)}</td>
               <td>${escapeHtml(row.username)}</td>
               <td>${escapeHtml(row.test_name)}</td>
@@ -514,7 +516,7 @@
               <td>${escapeHtml(row.percentage)}%</td>
               <td><button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteResult(${row.id})">❌</button></td>
             </tr>
-          `).join('')
+          `}).join('')
         : `<tr><td colspan="6">Результатов пока нет</td></tr>`;
 
       screenAdmin.innerHTML = `
@@ -588,6 +590,12 @@
           </div>
           
           <h2>Активные доступы</h2>
+          
+          <select id="filter-access" onchange="filterTableRows('access-row', this.value)" style="margin-bottom: 15px;">
+            <option value="all">Все предметы</option>
+            ${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
+          </select>
+
           <div class="table-wrap">
             <table>
               <tr><th>Студент</th><th>Предмет</th><th>Начало</th><th>Конец</th><th>Удалить</th></tr>
@@ -599,6 +607,12 @@
         <!-- Вкладка Результаты -->
         <div id="tab-results" class="tab-content admin-section">
           <h2>Результаты тестов</h2>
+          
+          <select id="filter-result" onchange="filterTableRows('result-row', this.value)" style="margin-bottom: 15px;">
+            <option value="all">Все предметы</option>
+            ${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
+          </select>
+
           <div class="table-wrap">
             <table>
               <tr><th>ID</th><th>Пользователь</th><th>Тест</th><th>Баллы</th><th>%</th><th>Удалить</th></tr>
@@ -818,7 +832,6 @@
       const end = new Date(endRaw).toISOString();
 
       for (const username of usernames) {
-        // Удаляем старый доступ к этому же предмету (чтобы обновить сроки)
         const { error: deleteError } = await supabaseClient
           .from('test_access')
           .delete()
@@ -928,6 +941,19 @@
       const accesses = accessResponse.data || [];
 
       renderAdminPanel(users, results, accesses);
+    }
+
+    // Функция для фильтрации таблиц
+    function filterTableRows(rowClassName, selectedKey) {
+      const rows = document.querySelectorAll('.' + rowClassName);
+      
+      rows.forEach(row => {
+        if (selectedKey === 'all' || row.dataset.test === selectedKey) {
+          row.style.display = '';
+        } else {
+          row.style.display = 'none';
+        }
+      });
     }
 
     function init() {
