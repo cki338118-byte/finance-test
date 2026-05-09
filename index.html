@@ -255,14 +255,65 @@ openAdminPanel();
 
 }
 
+async function deleteUser(id){
+
+const confirmDelete =
+confirm('Удалить пользователя?');
+
+if(!confirmDelete) return;
+
+await supabaseClient
+.from('users')
+.delete()
+.eq('id', id);
+
+openAdminPanel();
+
+}
+
+async function deleteResult(id){
+
+const confirmDelete =
+confirm('Удалить результат?');
+
+if(!confirmDelete) return;
+
+await supabaseClient
+.from('results')
+.delete()
+.eq('id', id);
+
+openAdminPanel();
+
+}
+
+function logout(){
+
+localStorage.removeItem('user');
+
+location.reload();
+
+}
 async function openAdminPanel(){
 
-const { data } =
+const usersResponse =
+await supabaseClient
+.from('users')
+.select('*')
+.order('id');
+
+const resultsResponse =
 await supabaseClient
 .from('results')
 .select('*')
 .order('id',
 { ascending:false });
+
+const users =
+usersResponse.data || [];
+
+const results =
+resultsResponse.data || [];
 
 let html = `
 <div class="container">
@@ -270,6 +321,10 @@ let html = `
 <div class="card">
 
 <h1>Админ-панель</h1>
+
+<button onclick="logout()">
+🚪 Выйти
+</button>
 
 <h2>Создать пользователя</h2>
 
@@ -309,26 +364,44 @@ admin
 
 <div class="card">
 
-<h2>Результаты</h2>
+<h2>Пользователи</h2>
 
 <table>
 
 <tr>
-<th>Пользователь</th>
-<th>Тест</th>
-<th>Баллы</th>
-<th>Процент</th>
+<th>ID</th>
+<th>Логин</th>
+<th>Роль</th>
+<th>Удалить</th>
 </tr>
 `;
 
-data.forEach(row=>{
+users.forEach(user=>{
 
 html += `
 <tr>
-<td>${row.username}</td>
-<td>${row.test_name}</td>
-<td>${row.score}/${row.total}</td>
-<td>${row.percentage}%</td>
+
+<td>${user.id}</td>
+
+<td>${user.username}</td>
+
+<td>${user.role}</td>
+
+<td>
+
+<button
+onclick="deleteUser(${user.id})"
+style="
+background:#dc3545;
+padding:10px;
+">
+
+❌
+
+</button>
+
+</td>
+
 </tr>
 `;
 
@@ -337,9 +410,61 @@ html += `
 html += `
 </table>
 
-<button onclick="location.reload()">
-Назад
+</div>
+
+<div class="card">
+
+<h2>Результаты</h2>
+
+<table>
+
+<tr>
+<th>ID</th>
+<th>Пользователь</th>
+<th>Тест</th>
+<th>Баллы</th>
+<th>%</th>
+<th>Удалить</th>
+</tr>
+`;
+
+results.forEach(row=>{
+
+html += `
+<tr>
+
+<td>${row.id}</td>
+
+<td>${row.username}</td>
+
+<td>${row.test_name}</td>
+
+<td>${row.score}/${row.total}</td>
+
+<td>${row.percentage}%</td>
+
+<td>
+
+<button
+onclick="deleteResult(${row.id})"
+style="
+background:#dc3545;
+padding:10px;
+">
+
+❌
+
 </button>
+
+</td>
+
+</tr>
+`;
+
+});
+
+html += `
+</table>
 
 </div>
 
@@ -349,7 +474,6 @@ html += `
 document.body.innerHTML = html;
 
 }
-
 
 const rawQuestions = [
 
@@ -438,6 +562,10 @@ return;
 }
 
 currentUser = data;
+  localStorage.setItem(
+'user',
+JSON.stringify(data)
+);
 
 if(currentUser.role==='admin'){
 
@@ -674,7 +802,33 @@ document
 loadQuestion();
 
 };
+const savedUser =
+localStorage.getItem('user');
 
+if(savedUser){
+
+currentUser =
+JSON.parse(savedUser);
+
+if(currentUser.role==='admin'){
+
+openAdminPanel();
+
+}else{
+
+document
+.getElementById('login-card')
+.classList.add('hidden');
+
+document
+.getElementById('quiz-card')
+.classList.remove('hidden');
+
+loadQuestion();
+
+}
+
+}
 </script>
 
 </body>
