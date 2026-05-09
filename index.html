@@ -1,174 +1,181 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Тест: Финансы</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HEMIS Test</title>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-  <style>
-    body{
-      margin:0;
-      font-family:Arial,sans-serif;
-      background:#f4f7f6;
-      color:#24303f;
-    }
+<style>
+body{
+  margin:0;
+  font-family:Arial,sans-serif;
+  background:#f4f7f6;
+  color:#24303f;
+}
 
-    .container{
-      max-width:900px;
-      margin:auto;
-      padding:20px;
-    }
+.container{
+  max-width:900px;
+  margin:auto;
+  padding:20px;
+}
 
-    .card{
-      background:white;
-      border-radius:20px;
-      padding:30px;
-      margin-top:20px;
-      box-shadow:0 4px 10px rgba(0,0,0,0.08);
-    }
+.card{
+  background:white;
+  border-radius:20px;
+  padding:30px;
+  margin-top:20px;
+  box-shadow:0 4px 10px rgba(0,0,0,0.08);
+}
 
-    h1{
-      text-align:center;
-      color:#1368CE;
-    }
+h1{
+  text-align:center;
+  color:#1368CE;
+}
 
-    #question{
-      font-size:24px;
-      font-weight:bold;
-      margin-bottom:20px;
-    }
+input{
+  width:100%;
+  padding:14px;
+  margin-top:12px;
+  border-radius:12px;
+  border:1px solid #ccc;
+  font-size:16px;
+}
 
-    .option{
-      display:block;
-      width:100%;
-      margin:10px 0;
-      padding:15px;
-      border:none;
-      border-radius:12px;
-      background:#eef2f7;
-      cursor:pointer;
-      font-size:18px;
-      transition:0.2s;
-    }
+button{
+  width:100%;
+  padding:15px;
+  border:none;
+  border-radius:12px;
+  background:#1368CE;
+  color:white;
+  font-size:18px;
+  margin-top:15px;
+  cursor:pointer;
+}
 
-    .option:hover{
-      background:#dfe8f5;
-    }
+.option{
+  background:#eef2f7;
+  color:#24303f;
+  margin-top:10px;
+}
 
-    .correct{
-      background:#28a745 !important;
-      color:white;
-    }
+.option:hover{
+  background:#dbe7ff;
+}
 
-    .wrong{
-      background:#dc3545 !important;
-      color:white;
-    }
+.correct{
+  background:#28a745 !important;
+  color:white;
+}
 
-    .hidden{
-      display:none;
-    }
+.wrong{
+  background:#dc3545 !important;
+  color:white;
+}
 
-    .btn{
-      padding:14px 20px;
-      border:none;
-      border-radius:12px;
-      cursor:pointer;
-      font-size:16px;
-      margin-top:20px;
-    }
+.hidden{
+  display:none;
+}
 
-    .btn-primary{
-      background:#1368CE;
-      color:white;
-    }
+.progress{
+  width:100%;
+  height:12px;
+  background:#ddd;
+  border-radius:20px;
+  overflow:hidden;
+  margin:20px 0;
+}
 
-    .btn-success{
-      background:#28a745;
-      color:white;
-    }
+.progress-bar{
+  height:100%;
+  width:0%;
+  background:#1368CE;
+}
 
-    .progress{
-      width:100%;
-      height:12px;
-      background:#ddd;
-      border-radius:20px;
-      overflow:hidden;
-      margin-top:20px;
-    }
+#question{
+  font-size:24px;
+  font-weight:bold;
+  margin-bottom:20px;
+}
 
-    .progress-bar{
-      height:100%;
-      background:#1368CE;
-      width:0%;
-    }
-
-    #score{
-      font-size:32px;
-      font-weight:bold;
-      text-align:center;
-    }
-  </style>
+.center{
+  text-align:center;
+}
+</style>
 </head>
 <body>
 
 <div class="container">
 
-  <h1>Персональные финансы</h1>
+<div id="login-card" class="card">
 
-  <div id="quiz-card" class="card">
-    <div id="counter"></div>
+<h1>Вход в систему</h1>
 
-    <div class="progress">
-      <div class="progress-bar" id="progress-bar"></div>
-    </div>
+<input id="username" placeholder="Логин">
+<input id="password" type="password" placeholder="Пароль">
 
-    <div id="question"></div>
+<button id="login-btn">Войти</button>
 
-    <div id="options"></div>
+</div>
 
-    <button id="next-btn" class="btn btn-primary hidden">
-      Следующий вопрос
-    </button>
-  </div>
+<div id="quiz-card" class="card hidden">
 
-  <div id="result-card" class="card hidden">
-    <h2 style="text-align:center;">Тест завершен</h2>
+<h1>Персональные финансы</h1>
 
-    <div id="score"></div>
+<div id="counter"></div>
 
-    <div style="text-align:center;">
-      <button class="btn btn-primary" id="restart-btn">
-        Начать сначала
-      </button>
+<div class="progress">
+<div class="progress-bar" id="progress-bar"></div>
+</div>
 
-      <button class="btn btn-success" id="wrong-btn">
-        Повторить ошибки
-      </button>
-    </div>
-  </div>
+<div id="question"></div>
+
+<div id="options"></div>
+
+<button id="next-btn" class="hidden">
+Следующий вопрос
+</button>
+
+</div>
+
+<div id="result-card" class="card hidden">
+
+<h1>Тест завершен</h1>
+
+<h2 id="score" class="center"></h2>
+
+<button id="restart-btn">
+Начать сначала
+</button>
+
+<button id="wrong-btn">
+Повторить ошибки
+</button>
+
+</div>
 
 </div>
 
 <script>
+
 const SUPABASE_URL =
 'https://enthswnpuhvmxyjfltms.supabase.co';
 
 const SUPABASE_KEY =
-'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVudGhzd25wdWh2bXh5amZsdG1zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzNDA3MzcsImV4cCI6MjA5MzkxNjczN30.2KNWdop3LP5RwDqNuK_ZDnWQAoyKQ-gJQ0Z0FXc6XPY';
+'https://enthswnpuhvmxyjfltms.supabase.co';
 
 const supabaseClient =
 supabase.createClient(
-  SUPABASE_URL,
-  SUPABASE_KEY
+SUPABASE_URL,
+'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVudGhzd25wdWh2bXh5amZsdG1zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzNDA3MzcsImV4cCI6MjA5MzkxNjczN30.2KNWdop3LP5RwDqNuK_ZDnWQAoyKQ-gJQ0Z0FXc6XPY'
 );
 
-const username =
-prompt("Введите имя или логин");
+let currentUser=null;
 
-const rawQuestions = [
+const rawQuestions=[
+
 {
 q:"Что такое ликвидность?",
 a:[
@@ -179,6 +186,7 @@ a:[
 ],
 c:0
 },
+
 {
 q:"Что такое инфляция?",
 a:[
@@ -189,88 +197,139 @@ a:[
 ],
 c:0
 }
+
 ];
 
 function shuffleArray(array){
-  const arr=[...array];
 
-  for(let i=arr.length-1;i>0;i--){
-    const j=Math.floor(Math.random()*(i+1));
-    [arr[i],arr[j]]=[arr[j],arr[i]];
-  }
+const arr=[...array];
 
-  return arr;
+for(let i=arr.length-1;i>0;i--){
+
+const j=Math.floor(Math.random()*(i+1));
+
+[arr[i],arr[j]]=[arr[j],arr[i]];
+
+}
+
+return arr;
+
 }
 
 let questions=shuffleArray(rawQuestions);
+
 let currentIndex=0;
 let score=0;
 let wrongQuestions=[];
 
+document
+.getElementById('login-btn')
+.onclick=async()=>{
+
+const username=
+document.getElementById('username').value;
+
+const password=
+document.getElementById('password').value;
+
+const {data,error}=await supabaseClient
+.from('users')
+.select('*')
+.eq('username',username)
+.eq('password',password)
+.single();
+
+if(error || !data){
+
+alert('Неверный логин или пароль');
+
+return;
+
+}
+
+currentUser=data;
+
+document
+.getElementById('login-card')
+.classList.add('hidden');
+
+document
+.getElementById('quiz-card')
+.classList.remove('hidden');
+
+loadQuestion();
+
+};
+
 function loadQuestion(){
 
-  const q=questions[currentIndex];
+const q=questions[currentIndex];
 
-  document.getElementById('counter').innerText =
-  `Вопрос ${currentIndex+1} из ${questions.length}`;
+document.getElementById('counter').innerText=
+`Вопрос ${currentIndex+1} из ${questions.length}`;
 
-  document.getElementById('question').innerText=q.q;
+document.getElementById('question').innerText=q.q;
 
-  document.getElementById('progress-bar').style.width=
-  `${(currentIndex/questions.length)*100}%`;
+document.getElementById('progress-bar').style.width=
+`${(currentIndex/questions.length)*100}%`;
 
-  const options=document.getElementById('options');
+const options=
+document.getElementById('options');
 
-  options.innerHTML='';
+options.innerHTML='';
 
-  q.a.forEach((option,index)=>{
+q.a.forEach((option,index)=>{
 
-    const btn=document.createElement('button');
+const btn=document.createElement('button');
 
-    btn.className='option';
+btn.className='option';
 
-    btn.innerText=option;
+btn.innerText=option;
 
-    btn.onclick=()=>selectAnswer(btn,index===q.c);
+btn.onclick=()=>selectAnswer(btn,index===q.c);
 
-    options.appendChild(btn);
+options.appendChild(btn);
 
-  });
+});
 
 }
 
 function selectAnswer(btn,isCorrect){
 
-  const buttons=
-  document.querySelectorAll('.option');
+const buttons=
+document.querySelectorAll('.option');
 
-  buttons.forEach(b=>b.disabled=true);
+buttons.forEach(b=>b.disabled=true);
 
-  if(isCorrect){
+if(isCorrect){
 
-    btn.classList.add('correct');
+btn.classList.add('correct');
 
-    score++;
+score++;
 
-  }else{
+}else{
 
-    btn.classList.add('wrong');
+btn.classList.add('wrong');
 
-    wrongQuestions.push(
-      questions[currentIndex]
-    );
+wrongQuestions.push(
+questions[currentIndex]
+);
 
-    buttons.forEach((b,i)=>{
-      if(i===questions[currentIndex].c){
-        b.classList.add('correct');
-      }
-    });
+buttons.forEach((b,i)=>{
 
-  }
+if(i===questions[currentIndex].c){
 
-  document
-  .getElementById('next-btn')
-  .classList.remove('hidden');
+b.classList.add('correct');
+
+}
+
+});
+
+}
+
+document
+.getElementById('next-btn')
+.classList.remove('hidden');
 
 }
 
@@ -278,61 +337,61 @@ document
 .getElementById('next-btn')
 .onclick=()=>{
 
-  currentIndex++;
+currentIndex++;
 
-  if(currentIndex<questions.length){
+if(currentIndex<questions.length){
 
-    loadQuestion();
+loadQuestion();
 
-    document
-    .getElementById('next-btn')
-    .classList.add('hidden');
+document
+.getElementById('next-btn')
+.classList.add('hidden');
 
-  }else{
+}else{
 
-    finishQuiz();
+finishQuiz();
 
-  }
+}
 
 };
 
 async function saveResult(){
 
-  const total=questions.length;
+const total=questions.length;
 
-  const percentage=
-  ((score/total)*100).toFixed(2);
+const percentage=
+((score/total)*100).toFixed(2);
 
-  await supabaseClient
-  .from('results')
-  .insert([
-    {
-      username:username||'Unknown',
-      test_name:'Финансы',
-      score:score,
-      total:total,
-      percentage:percentage
-    }
-  ]);
+await supabaseClient
+.from('results')
+.insert([
+{
+username:currentUser.username,
+test_name:'Финансы',
+score:score,
+total:total,
+percentage:percentage
+}
+]);
 
 }
 
 async function finishQuiz(){
 
-  await saveResult();
+await saveResult();
 
-  document
-  .getElementById('quiz-card')
-  .classList.add('hidden');
+document
+.getElementById('quiz-card')
+.classList.add('hidden');
 
-  document
-  .getElementById('result-card')
-  .classList.remove('hidden');
+document
+.getElementById('result-card')
+.classList.remove('hidden');
 
-  document
-  .getElementById('score')
-  .innerText=
-  `${score} / ${questions.length}`;
+document
+.getElementById('score')
+.innerText=
+`${score} / ${questions.length}`;
 
 }
 
@@ -340,7 +399,7 @@ document
 .getElementById('restart-btn')
 .onclick=()=>{
 
-  location.reload();
+location.reload();
 
 };
 
@@ -348,30 +407,32 @@ document
 .getElementById('wrong-btn')
 .onclick=()=>{
 
-  if(!wrongQuestions.length){
-    alert('Ошибок нет');
-    return;
-  }
+if(!wrongQuestions.length){
 
-  questions=shuffleArray(wrongQuestions);
+alert('Ошибок нет');
 
-  currentIndex=0;
-  score=0;
-  wrongQuestions=[];
+return;
 
-  document
-  .getElementById('result-card')
-  .classList.add('hidden');
+}
 
-  document
-  .getElementById('quiz-card')
-  .classList.remove('hidden');
+questions=shuffleArray(wrongQuestions);
 
-  loadQuestion();
+currentIndex=0;
+score=0;
+wrongQuestions=[];
+
+document
+.getElementById('result-card')
+.classList.add('hidden');
+
+document
+.getElementById('quiz-card')
+.classList.remove('hidden');
+
+loadQuestion();
 
 };
 
-loadQuestion();
 </script>
 
 </body>
