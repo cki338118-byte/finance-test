@@ -710,7 +710,11 @@ screenSelection.innerHTML = html;
       }
     }
 
-    function renderAdminPanel(users = [], results = []) {
+    function renderAdminPanel(
+users = [],
+results = [],
+accesses = []
+){
       showScreen('screen-admin');
 
       const userRows = users.length
@@ -726,6 +730,62 @@ screenSelection.innerHTML = html;
           `).join('')
         : `<tr><td colspan="4">Пользователей пока нет</td></tr>`;
 
+     const accessRows =
+accesses.length
+? accesses.map(row=>`
+
+<tr>
+
+<td>
+${escapeHtml(row.username)}
+</td>
+
+<td>
+${escapeHtml(
+getTestTitle(row.test_key)
+)}
+</td>
+
+<td>
+${new Date(
+row.start_time
+).toLocaleString()}
+</td>
+
+<td>
+${new Date(
+row.end_time
+).toLocaleString()}
+</td>
+
+<td>
+
+<button
+class="btn-bad"
+style="padding:10px;width:auto;"
+onclick="deleteAccess(${row.id})">
+
+❌
+
+</button>
+
+</td>
+
+</tr>
+
+`).join('')
+
+: `
+
+<tr>
+
+<td colspan="5">
+Нет активных доступов
+</td>
+
+</tr>
+
+`; 
       const resultRows = results.length
         ? results.map(row => `
             <tr>
@@ -856,6 +916,47 @@ onclick="grantAccess()">
         </div>
 
         <div class="admin-section">
+         <div class="admin-section">
+
+<h2>
+Активные доступы
+</h2>
+
+<div class="table-wrap">
+
+<table>
+
+<tr>
+
+<th>
+Студент
+</th>
+
+<th>
+Предмет
+</th>
+
+<th>
+Начало
+</th>
+
+<th>
+Конец
+</th>
+
+<th>
+Удалить
+</th>
+
+</tr>
+
+${accessRows}
+
+</table>
+
+</div>
+
+</div>
           <h2>Результаты</h2>
           <div class="table-wrap">
             <table>
@@ -1144,20 +1245,41 @@ return;
 
 }
 
-const rows =
-usernames.map(username=>({
+for(const username of usernames){
+
+await supabaseClient
+.from('test_access')
+.delete()
+.eq('username', username)
+.eq('test_key', testKey);
+
+const { error } =
+await supabaseClient
+.from('test_access')
+.insert([
+{
 username:username,
 test_key:testKey,
 start_time:start,
 end_time:end,
 attempt_limit:attempts,
 is_active:true
-}));
+}
+]);
 
-const { error } =
-await supabaseClient
-.from('test_access')
-.insert(rows);
+if(error){
+
+console.log(error);
+
+alert(
+'Ошибка выдачи доступа'
+);
+
+return;
+
+}
+
+}
 
 if(error){
 
@@ -1220,6 +1342,34 @@ alert(
       await openAdminPanel();
     }
 
+    async function deleteAccess(id){
+
+const ok =
+confirm(
+'Удалить доступ?'
+);
+
+if(!ok) return;
+
+const { error } =
+await supabaseClient
+.from('test_access')
+.delete()
+.eq('id', id);
+
+if(error){
+
+alert(
+'Ошибка удаления'
+);
+
+return;
+
+}
+
+await openAdminPanel();
+
+}
     async function deleteResult(id) {
       const ok = confirm('Удалить результат?');
       if (!ok) return;
@@ -1241,15 +1391,30 @@ alert(
     async function openAdminPanel() {
       showScreen('screen-admin');
 
-      const [usersResponse, resultsResponse] = await Promise.all([
+      const [
+usersResponse,
+resultsResponse,
+accessResponse
+] = await Promise.all([
         supabaseClient.from('users').select('*').order('id', { ascending: true }),
-        supabaseClient.from('results').select('*').order('id', { ascending: false })
+       ,
+
+supabaseClient
+.from('test_access')
+.select('*')
+.order('id', { ascending:false })
       ]);
 
       const users = usersResponse.data || [];
       const results = resultsResponse.data || [];
+      const accesses =
+accessResponse.data || [];
 
-      renderAdminPanel(users, results);
+      renderAdminPanel(
+users,
+results,
+accesses
+);
     }
 
     function init() {
