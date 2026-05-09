@@ -264,56 +264,50 @@
     .admin-head button {
       width: auto;
       flex: 1 1 220px;
-    .students-list{
+    }
 
-display:flex;
-flex-direction:column;
-gap:10px;
+    .students-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 15px;
+      border: 1px solid #dbe3ea;
+      border-radius: 12px;
+      margin-bottom: 15px;
+      max-height: 250px;
+      overflow: auto;
+      background: white;
+    }
 
-padding:15px;
+    .student-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: .2s;
+      text-align: left;
+      color: var(--text);
+    }
 
-border:1px solid #dbe3ea;
-border-radius:12px;
+    .student-item:hover {
+      background: #f4f7fb;
+    }
 
-margin-bottom:15px;
+    .student-checkbox {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+      margin: 0;
+      flex: 0 0 auto;
+    }
 
-max-height:250px;
-overflow:auto;
-
-background:white;
-
-}
-
-.student-item{
-
-display:flex;
-align-items:center;
-gap:10px;
-
-padding:10px;
-
-border-radius:10px;
-
-cursor:pointer;
-
-transition:.2s;
-
-}
-
-.student-item:hover{
-
-background:#f4f7fb;
-
-}
-
-.student-checkbox{
-
-width:18px;
-height:18px;
-
-cursor:pointer;
-
-}
+    .access-note {
+      font-size: 14px;
+      color: var(--muted);
+      margin-top: 8px;
+      text-align: center;
     }
 
     @media (max-width: 720px) {
@@ -538,106 +532,53 @@ cursor:pointer;
       });
     }
 
-    async function renderSelection(){
+    async function renderSelection() {
+      showScreen('screen-selection');
 
-showScreen('screen-selection');
+      const now = new Date().toISOString();
 
-const now =
-new Date().toISOString();
+      const { data, error } = await supabaseClient
+        .from('test_access')
+        .select('*')
+        .eq('username', state.currentUser.username)
+        .eq('is_active', true)
+        .lte('start_time', now)
+        .gte('end_time', now);
 
-const { data, error } =
-await supabaseClient
-.from('test_access')
-.select('*')
-.eq(
-'username',
-state.currentUser.username
-)
-.eq('is_active', true)
-.lte('start_time', now)
-.gte('end_time', now);
+      if (error) {
+        console.log(error);
+        screenSelection.innerHTML = `<h1>Ошибка доступа</h1>`;
+        return;
+      }
 
-if(error){
+      let html = `
+        <div class="screen-top">
+          <div class="left">
+            <h1 class="title-left">Доступные тесты</h1>
+            <div class="subtitle-left">Пользователь: ${escapeHtml(state.currentUser.username)}</div>
+          </div>
+          <div class="right">
+            <button class="btn-bad" onclick="logout()">🚪 Выйти</button>
+          </div>
+        </div>
+      `;
 
-console.log(error);
+      if (!data.length) {
+        html += `<div class="muted">Сейчас вам недоступны тесты</div>`;
+      } else {
+        html += `<div class="grid">`;
+        data.forEach(test => {
+          html += `
+            <button onclick="startTest('${test.test_key}')">
+              ${getTestTitle(test.test_key)}
+            </button>
+          `;
+        });
+        html += `</div>`;
+      }
 
-screenSelection.innerHTML = `
-<h1>Ошибка доступа</h1>
-`;
-
-return;
-
-}
-
-let html = `
-<div class="screen-top">
-
-<div class="left">
-
-<h1 class="title-left">
-Доступные тесты
-</h1>
-
-<div class="subtitle-left">
-Пользователь:
-${state.currentUser.username}
-</div>
-
-</div>
-
-<div class="right">
-
-<button
-class="btn-bad"
-onclick="logout()">
-
-🚪 Выйти
-
-</button>
-
-</div>
-
-</div>
-`;
-
-if(!data.length){
-
-html += `
-<div class="muted">
-
-Сейчас вам недоступны тесты
-
-</div>
-`;
-
-}else{
-
-html += `
-<div class="grid">
-`;
-
-data.forEach(test=>{
-
-html += `
-<button
-onclick="startTest('${test.test_key}')">
-
-${getTestTitle(test.test_key)}
-
-</button>
-`;
-
-});
-
-html += `
-</div>
-`;
-
-}
-
-screenSelection.innerHTML = html;
-
-}
+      screenSelection.innerHTML = html;
+    }
 
     function renderQuizShell() {
       showScreen('screen-quiz');
@@ -710,11 +651,7 @@ screenSelection.innerHTML = html;
       }
     }
 
-    function renderAdminPanel(
-users = [],
-results = [],
-accesses = []
-){
+    function renderAdminPanel(users = [], results = [], accesses = []) {
       showScreen('screen-admin');
 
       const userRows = users.length
@@ -730,62 +667,21 @@ accesses = []
           `).join('')
         : `<tr><td colspan="4">Пользователей пока нет</td></tr>`;
 
-     const accessRows =
-accesses.length
-? accesses.map(row=>`
+      const accessRows = accesses.length
+        ? accesses.map(row => `
+            <tr>
+              <td>${escapeHtml(row.username)}</td>
+              <td>${escapeHtml(getTestTitle(row.test_key))}</td>
+              <td>${new Date(row.start_time).toLocaleString()}</td>
+              <td>${new Date(row.end_time).toLocaleString()}</td>
+              <td>${escapeHtml(row.attempt_limit ?? 1)}</td>
+              <td>
+                <button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteAccess(${row.id})">❌</button>
+              </td>
+            </tr>
+          `).join('')
+        : `<tr><td colspan="6">Нет активных доступов</td></tr>`;
 
-<tr>
-
-<td>
-${escapeHtml(row.username)}
-</td>
-
-<td>
-${escapeHtml(
-getTestTitle(row.test_key)
-)}
-</td>
-
-<td>
-${new Date(
-row.start_time
-).toLocaleString()}
-</td>
-
-<td>
-${new Date(
-row.end_time
-).toLocaleString()}
-</td>
-
-<td>
-
-<button
-class="btn-bad"
-style="padding:10px;width:auto;"
-onclick="deleteAccess(${row.id})">
-
-❌
-
-</button>
-
-</td>
-
-</tr>
-
-`).join('')
-
-: `
-
-<tr>
-
-<td colspan="5">
-Нет активных доступов
-</td>
-
-</tr>
-
-`; 
       const resultRows = results.length
         ? results.map(row => `
             <tr>
@@ -809,86 +705,41 @@ onclick="deleteAccess(${row.id})">
             <button class="btn-bad" onclick="logout()">🚪 Выйти</button>
           </div>
         </div>
-<div class="admin-section card"
-style="box-shadow:none; margin-top:0; padding:0;">
 
-<h2>Открыть доступ</h2>
+        <div class="admin-section card" style="box-shadow:none; margin-top:0; padding:0;">
+          <h2>Открыть доступ</h2>
 
-<select id="access-test">
+          <select id="access-test">
+            <option value="personal_finance">Персональные финансы</option>
+            <option value="portfolio_theory">Теория портфеля</option>
+            <option value="econometrics">Эконометрика</option>
+            <option value="bank_accounting">Бухгалтерия в банке</option>
+            <option value="bank_accounting_records">Бухгалтерский учет в банке</option>
+            <option value="green_economy">Зеленая экономика</option>
+            <option value="money_and_banks">Деньги и банки</option>
+            <option value="finance">Финансы</option>
+          </select>
 
-<option value="personal_finance">
-Персональные финансы
-</option>
+          <div id="students-list" class="students-list">Загрузка студентов...</div>
 
-<option value="portfolio_theory">
-Теория портфеля
-</option>
+          <label style="display:block;margin-top:15px;">Начало</label>
+          <input id="access-start" type="datetime-local">
 
-<option value="econometrics">
-Эконометрика
-</option>
+          <label style="display:block;margin-top:15px;">Конец</label>
+          <input id="access-end" type="datetime-local">
 
-<option value="bank_accounting">
-Бухгалтерия в банке
-</option>
+          <input
+            id="access-attempts"
+            type="number"
+            placeholder="Лимит попыток"
+            value="1"
+            min="1"
+          >
 
-<option value="bank_accounting_records">
-Бухгалтерский учет в банке
-</option>
+          <button class="btn-ok" onclick="grantAccess()">Открыть доступ</button>
+          <div class="access-note">Выберите одного или нескольких студентов галочками.</div>
+        </div>
 
-<option value="green_economy">
-Зеленая экономика
-</option>
-
-<option value="money_and_banks">
-Деньги и банки
-</option>
-
-<option value="finance">
-Финансы
-</option>
-
-</select>
-
-<div
-id="students-list"
-class="students-list">
-
-Загрузка студентов...
-
-</div>
-
-<label style="display:block;margin-top:15px;">
-Начало
-</label>
-
-<input
-id="access-start"
-type="datetime-local">
-
-<label style="display:block;margin-top:15px;">
-Конец
-</label>
-
-<input
-id="access-end"
-type="datetime-local">
-
-<input
-id="access-attempts"
-type="number"
-placeholder="Лимит попыток"
-value="1">
-
-<button
-class="btn-ok"
-onclick="grantAccess()">
-
-Открыть доступ
-
-</button>
-
-</div>
         <div class="admin-section card" style="box-shadow:none; margin-top:0; padding:0;">
           <h2>Создать пользователя</h2>
           <input id="new-username" placeholder="Логин" autocomplete="off" />
@@ -916,47 +767,23 @@ onclick="grantAccess()">
         </div>
 
         <div class="admin-section">
-         <div class="admin-section">
+          <h2>Активные доступы</h2>
+          <div class="table-wrap">
+            <table>
+              <tr>
+                <th>Студент</th>
+                <th>Предмет</th>
+                <th>Начало</th>
+                <th>Конец</th>
+                <th>Попытки</th>
+                <th>Удалить</th>
+              </tr>
+              ${accessRows}
+            </table>
+          </div>
+        </div>
 
-<h2>
-Активные доступы
-</h2>
-
-<div class="table-wrap">
-
-<table>
-
-<tr>
-
-<th>
-Студент
-</th>
-
-<th>
-Предмет
-</th>
-
-<th>
-Начало
-</th>
-
-<th>
-Конец
-</th>
-
-<th>
-Удалить
-</th>
-
-</tr>
-
-${accessRows}
-
-</table>
-
-</div>
-
-</div>
+        <div class="admin-section">
           <h2>Результаты</h2>
           <div class="table-wrap">
             <table>
@@ -973,7 +800,8 @@ ${accessRows}
           </div>
         </div>
       `;
-    loadStudentsList();
+
+      loadStudentsList();
     }
 
     async function handleLogin() {
@@ -1003,7 +831,7 @@ ${accessRows}
       if (data.role === 'admin') {
         await openAdminPanel();
       } else {
-        renderSelection();
+        await renderSelection();
       }
     }
 
@@ -1151,153 +979,99 @@ ${accessRows}
       renderLogin();
     }
 
- async function loadStudentsList(){
+    async function loadStudentsList() {
+      const container = document.getElementById('students-list');
+      if (!container) return;
 
-const container =
-document.getElementById(
-'students-list'
-);
+      const { data, error } = await supabaseClient
+        .from('users')
+        .select('*')
+        .neq('role', 'admin')
+        .order('id', { ascending: true });
 
-if(!container) return;
+      if (error) {
+        console.log(error);
+        container.innerHTML = 'Ошибка загрузки';
+        return;
+      }
 
-const { data, error } =
-await supabaseClient
-.from('users')
-.select('*')
-.neq('role', 'admin');
+      const students = data || [];
 
-if(error){
+      if (!students.length) {
+        container.innerHTML = '<div class="muted" style="margin:0;">Нет студентов</div>';
+        return;
+      }
 
-container.innerHTML =
-'Ошибка загрузки';
+      let html = '';
 
-return;
+      students.forEach(user => {
+        html += `
+          <label class="student-item">
+            <input
+              type="checkbox"
+              value="${escapeHtml(user.username)}"
+              class="student-checkbox"
+            >
+            <span>${escapeHtml(user.username)}</span>
+          </label>
+        `;
+      });
 
-}
+      container.innerHTML = html;
+    }
 
-let html = '';
+    async function grantAccess() {
+      const testKey = document.getElementById('access-test').value;
+      const usernames = [...document.querySelectorAll('.student-checkbox:checked')].map(cb => cb.value);
+      const startRaw = document.getElementById('access-start').value;
+      const endRaw = document.getElementById('access-end').value;
+      const attempts = parseInt(document.getElementById('access-attempts').value, 10) || 1;
 
-data.forEach(user=>{
+      if (!usernames.length || !startRaw || !endRaw) {
+        alert('Заполните поля');
+        return;
+      }
 
-html += `
-<label class="student-item">
+      const start = new Date(startRaw).toISOString();
+      const end = new Date(endRaw).toISOString();
 
-<input
-type="checkbox"
-value="${user.username}"
-class="student-checkbox">
+      for (const username of usernames) {
+        const { error: deleteError } = await supabaseClient
+          .from('test_access')
+          .delete()
+          .eq('username', username)
+          .eq('test_key', testKey);
 
-<span>
-${user.username}
-</span>
+        if (deleteError) {
+          console.log(deleteError);
+          alert('Ошибка удаления старого доступа');
+          return;
+        }
 
-</label>
-`;
+        const { error: insertError } = await supabaseClient
+          .from('test_access')
+          .insert([
+            {
+              username,
+              test_key: testKey,
+              start_time: start,
+              end_time: end,
+              attempt_limit: attempts,
+              is_active: true
+            }
+          ]);
 
-});
+        if (insertError) {
+          console.log(insertError);
+          alert('Ошибка выдачи доступа');
+          return;
+        }
+      }
 
-container.innerHTML = html;
+      alert('Доступ открыт');
+      await openAdminPanel();
+    }
 
-}
-  async function grantAccess(){
-
-const testKey =
-document.getElementById(
-'access-test'
-).value;
-
-const usernames =
-[
-...document.querySelectorAll(
-'.student-checkbox:checked'
-)
-]
-.map(cb=>cb.value);
-
-const start =
-new Date(
-document.getElementById('access-start').value
-).toISOString();
-
-const end =
-new Date(
-document.getElementById('access-end').value
-).toISOString();
-
-const attempts =
-parseInt(
-document.getElementById(
-'access-attempts'
-).value
-);
-
-if(
-!usernames.length ||
-!start ||
-!end
-){
-
-alert(
-'Заполните поля'
-);
-
-return;
-
-}
-
-for(const username of usernames){
-
-await supabaseClient
-.from('test_access')
-.delete()
-.eq('username', username)
-.eq('test_key', testKey);
-
-const { error } =
-await supabaseClient
-.from('test_access')
-.insert([
-{
-username:username,
-test_key:testKey,
-start_time:start,
-end_time:end,
-attempt_limit:attempts,
-is_active:true
-}
-]);
-
-if(error){
-
-console.log(error);
-
-alert(
-'Ошибка выдачи доступа'
-);
-
-return;
-
-}
-
-}
-
-if(error){
-
-console.log(error);
-
-alert(
-'Ошибка выдачи доступа'
-);
-
-return;
-
-}
-
-alert(
-'Доступ открыт'
-);
-
-}
     async function createUser() {
       const username = document.getElementById('new-username').value.trim();
       const password = document.getElementById('new-password').value.trim();
@@ -1342,34 +1116,24 @@ alert(
       await openAdminPanel();
     }
 
-    async function deleteAccess(id){
+    async function deleteAccess(id) {
+      const ok = confirm('Удалить доступ?');
+      if (!ok) return;
 
-const ok =
-confirm(
-'Удалить доступ?'
-);
+      const { error } = await supabaseClient
+        .from('test_access')
+        .delete()
+        .eq('id', id);
 
-if(!ok) return;
+      if (error) {
+        alert('Ошибка удаления доступа');
+        console.error(error);
+        return;
+      }
 
-const { error } =
-await supabaseClient
-.from('test_access')
-.delete()
-.eq('id', id);
+      await openAdminPanel();
+    }
 
-if(error){
-
-alert(
-'Ошибка удаления'
-);
-
-return;
-
-}
-
-await openAdminPanel();
-
-}
     async function deleteResult(id) {
       const ok = confirm('Удалить результат?');
       if (!ok) return;
@@ -1391,30 +1155,17 @@ await openAdminPanel();
     async function openAdminPanel() {
       showScreen('screen-admin');
 
-      const [
-usersResponse,
-resultsResponse,
-accessResponse
-] = await Promise.all([
+      const [usersResponse, resultsResponse, accessResponse] = await Promise.all([
         supabaseClient.from('users').select('*').order('id', { ascending: true }),
-       ,
-
-supabaseClient
-.from('test_access')
-.select('*')
-.order('id', { ascending:false })
+        supabaseClient.from('results').select('*').order('id', { ascending: false }),
+        supabaseClient.from('test_access').select('*').order('id', { ascending: false })
       ]);
 
       const users = usersResponse.data || [];
       const results = resultsResponse.data || [];
-      const accesses =
-accessResponse.data || [];
+      const accesses = accessResponse.data || [];
 
-      renderAdminPanel(
-users,
-results,
-accesses
-);
+      renderAdminPanel(users, results, accesses);
     }
 
     function init() {
