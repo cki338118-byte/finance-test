@@ -1,1056 +1,952 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HEMIS Test</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HEMIS Test</title>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-<style>
+  <style>
+    :root {
+      --bg: #f4f7f6;
+      --card: #ffffff;
+      --text: #24303f;
+      --muted: #6b7280;
+      --primary: #1368CE;
+      --border: #d7dce3;
+      --ok: #28a745;
+      --bad: #dc3545;
+      --shadow: 0 4px 10px rgba(0,0,0,0.08);
+    }
 
-body{
-  margin:0;
-  font-family:Arial,sans-serif;
-  background:#f4f7f6;
-  color:#24303f;
-}
+    * { box-sizing: border-box; }
 
-.container{
-  max-width:900px;
-  margin:auto;
-  padding:20px;
-}
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
 
-.card{
-  background:white;
-  border-radius:20px;
-  padding:30px;
-  margin-top:20px;
-  box-shadow:0 4px 10px rgba(0,0,0,0.08);
-}
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 20px;
+    }
 
-h1{
-  text-align:center;
-  color:#1368CE;
-}
+    .card {
+      background: var(--card);
+      border-radius: 20px;
+      padding: 28px;
+      margin-top: 20px;
+      box-shadow: var(--shadow);
+    }
 
-input{
-  width:100%;
-  padding:14px;
-  margin-top:12px;
-  border-radius:12px;
-  border:1px solid #ccc;
-  font-size:16px;
-}
+    .hidden { display: none !important; }
 
-button{
-  width:100%;
-  padding:15px;
-  border:none;
-  border-radius:12px;
-  background:#1368CE;
-  color:white;
-  font-size:18px;
-  margin-top:15px;
-  cursor:pointer;
-}
+    h1, h2 {
+      margin: 0 0 16px 0;
+      color: var(--primary);
+      text-align: center;
+    }
 
-.option{
-  background:#eef2f7;
-  color:#24303f;
-  margin-top:10px;
-}
+    .muted {
+      color: var(--muted);
+      text-align: center;
+      margin-bottom: 16px;
+    }
 
-.option:hover{
-  background:#dbe7ff;
-}
+    input, select, button {
+      width: 100%;
+      padding: 14px;
+      margin-top: 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      font-size: 16px;
+      outline: none;
+    }
 
-.correct{
-  background:#28a745 !important;
-  color:white;
-}
+    input, select {
+      background: #fff;
+      color: var(--text);
+    }
 
-.wrong{
-  background:#dc3545 !important;
-  color:white;
-}
+    button {
+      border: none;
+      background: var(--primary);
+      color: #fff;
+      cursor: pointer;
+      transition: transform .05s ease, opacity .2s ease, background .2s ease;
+      font-weight: 700;
+    }
 
-.hidden{
-  display:none;
-}
+    button:hover { opacity: .95; }
+    button:active { transform: translateY(1px); }
 
-.progress{
-  width:100%;
-  height:12px;
-  background:#ddd;
-  border-radius:20px;
-  overflow:hidden;
-  margin:20px 0;
-}
+    .btn-ok { background: var(--ok); }
+    .btn-bad { background: var(--bad); }
+    .btn-gray { background: #e9eef5; color: var(--text); }
+    .btn-dark { background: #24303f; }
 
-.progress-bar{
-  height:100%;
-  width:0%;
-  background:#1368CE;
-}
+    .screen-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
 
-#question{
-  font-size:24px;
-  font-weight:bold;
-  margin-bottom:20px;
-}
+    .screen-top .left {
+      flex: 1;
+      min-width: 0;
+    }
 
-.center{
-  text-align:center;
-}
+    .screen-top .right {
+      width: 160px;
+      flex: 0 0 160px;
+    }
 
-table{
-  width:100%;
-  border-collapse:collapse;
-  margin-top:20px;
-}
+    .screen-top .title-left {
+      text-align: left;
+      margin: 0;
+    }
 
-th,td{
-  border:1px solid #ddd;
-  padding:12px;
-  text-align:center;
-}
+    .screen-top .subtitle-left {
+      text-align: left;
+      margin: 4px 0 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
 
-th{
-  background:#1368CE;
-  color:white;
-}
+    .progress {
+      width: 100%;
+      height: 12px;
+      background: #ddd;
+      border-radius: 20px;
+      overflow: hidden;
+      margin: 18px 0 20px 0;
+    }
 
-</style>
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: var(--primary);
+      transition: width .25s ease;
+    }
+
+    #counter {
+      color: var(--muted);
+      margin-bottom: 8px;
+      text-align: left;
+      font-size: 14px;
+    }
+
+    #question {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 18px;
+      line-height: 1.35;
+      white-space: pre-wrap;
+    }
+
+    .option {
+      background: #eef2f7;
+      color: var(--text);
+      margin-top: 10px;
+      text-align: left;
+      padding: 14px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: background .2s ease, transform .05s ease, border-color .2s ease;
+      width: 100%;
+    }
+
+    .option:hover {
+      background: #dbe7ff;
+      border-color: #c8d5ef;
+    }
+
+    .option:disabled {
+      cursor: default;
+      opacity: .96;
+    }
+
+    .correct {
+      background: rgba(40,167,69,.12) !important;
+      color: #145c26 !important;
+      border-color: rgba(40,167,69,.35) !important;
+      font-weight: 700;
+    }
+
+    .wrong {
+      background: rgba(220,53,69,.12) !important;
+      color: #8c1e2b !important;
+      border-color: rgba(220,53,69,.35) !important;
+      font-weight: 700;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .small-note {
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+      margin-top: 6px;
+    }
+
+    .result-score {
+      text-align: center;
+      font-size: 44px;
+      font-weight: 800;
+      color: var(--primary);
+      margin: 10px 0 6px 0;
+    }
+
+    .result-meta {
+      text-align: center;
+      color: var(--muted);
+      margin-top: 6px;
+      margin-bottom: 12px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+
+    .toolbar button {
+      width: auto;
+      flex: 1 1 180px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 18px;
+    }
+
+    th, td {
+      border: 1px solid #dfe5ee;
+      padding: 12px;
+      text-align: center;
+      vertical-align: middle;
+    }
+
+    th {
+      background: var(--primary);
+      color: #fff;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    .admin-section {
+      margin-top: 18px;
+    }
+
+    .admin-head {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+
+    .admin-head button {
+      width: auto;
+      flex: 1 1 220px;
+    }
+
+    @media (max-width: 720px) {
+      .container { padding: 14px; }
+      .card { padding: 18px; border-radius: 16px; }
+      .grid { grid-template-columns: 1fr; }
+      .screen-top {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .screen-top .right {
+        width: 100%;
+        flex: 1 1 auto;
+      }
+      #question { font-size: 21px; }
+      .result-score { font-size: 36px; }
+      .toolbar button {
+        flex: 1 1 100%;
+      }
+    }
+  </style>
 </head>
 <body>
-
-<div class="container">
-
-<div id="login-card" class="card">
-
-<h1>Вход в систему</h1>
-
-<input id="username" placeholder="Логин">
-
-<input id="password"
-type="password"
-placeholder="Пароль">
-
-<button id="login-btn">
-Войти
-</button>
-
-</div>
-
-<div id="quiz-card"
-class="card hidden">
-
-<h1>Персональные финансы</h1>
-  <button
-onclick="logout()"
-style="
-background:#dc3545;
-margin-bottom:20px;
-">
-🚪 Выйти
-</button>
-
-<div id="counter"></div>
-
-<div class="progress">
-<div class="progress-bar"
-id="progress-bar"></div>
-</div>
-
-<div id="question"></div>
-
-<div id="options"></div>
-
-<button id="next-btn"
-class="hidden">
-Следующий вопрос
-</button>
-
-</div>
-
-<div id="result-card"
-class="card hidden">
-
-<h1>Тест завершен</h1>
-
-<h2 id="score"
-class="center"></h2>
-
-<button id="restart-btn">
-Начать сначала
-</button>
-
-<button id="wrong-btn">
-Повторить ошибки
-</button>
-
-</div>
-
-</div>
-
-<script>
-
-const SUPABASE_URL =
-'https://enthswnpuhvmxyjfltms.supabase.co';
-
-const SUPABASE_ANON_KEY =
-'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVudGhzd25wdWh2bXh5amZsdG1zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzNDA3MzcsImV4cCI6MjA5MzkxNjczN30.2KNWdop3LP5RwDqNuK_ZDnWQAoyKQ-gJQ0Z0FXc6XPY';
-
-const supabaseClient =
-supabase.createClient(
-SUPABASE_URL,
-SUPABASE_ANON_KEY
-);
-
-let currentUser = null;
-
-async function createUser(){
-
-const username =
-document.getElementById(
-'new-username'
-).value;
-
-const password =
-document.getElementById(
-'new-password'
-).value;
-
-const role =
-document.getElementById(
-'new-role'
-).value;
-
-if(!username || !password){
-
-alert('Заполните поля');
-
-return;
-
-}
-
-const { error } =
-await supabaseClient
-.from('users')
-.insert([
-{
-username,
-password,
-role
-}
-]);
-
-if(error){
-
-alert('Ошибка создания');
-
-console.log(error);
-
-}else{
-
-alert('Пользователь создан');
-
-openAdminPanel();
-
-}
-
-}
-
-async function deleteUser(id){
-
-const confirmDelete =
-confirm('Удалить пользователя?');
-
-if(!confirmDelete) return;
-
-await supabaseClient
-.from('users')
-.delete()
-.eq('id', id);
-
-openAdminPanel();
-
-}
-
-async function deleteResult(id){
-
-const confirmDelete =
-confirm('Удалить результат?');
-
-if(!confirmDelete) return;
-
-await supabaseClient
-.from('results')
-.delete()
-.eq('id', id);
-
-openAdminPanel();
-
-}
-
-function logout(){
-
-localStorage.removeItem('user');
-
-location.reload();
-
-}
-async function openAdminPanel(){
-
-const usersResponse =
-await supabaseClient
-.from('users')
-.select('*')
-.order('id');
-
-const resultsResponse =
-await supabaseClient
-.from('results')
-.select('*')
-.order('id',
-{ ascending:false });
-
-const users =
-usersResponse.data || [];
-
-const results =
-resultsResponse.data || [];
-
-let html = `
-<div class="container">
-
-<div class="card">
-
-<h1>Админ-панель</h1>
-
-<button onclick="logout()">
-🚪 Выйти
-</button>
-
-<h2>Создать пользователя</h2>
-
-<input
-id="new-username"
-placeholder="Логин">
-
-<input
-id="new-password"
-placeholder="Пароль">
-
-<select
-id="new-role"
-style="
-width:100%;
-padding:14px;
-margin-top:12px;
-border-radius:12px;
-font-size:16px;
-">
-
-<option value="student">
-student
-</option>
-
-<option value="admin">
-admin
-</option>
-
-</select>
-
-<button onclick="createUser()">
-Создать пользователя
-</button>
-
-</div>
-
-<div class="card">
-
-<h2>Пользователи</h2>
-
-<table>
-
-<tr>
-<th>ID</th>
-<th>Логин</th>
-<th>Роль</th>
-<th>Удалить</th>
-</tr>
-`;
-
-users.forEach(user=>{
-
-html += `
-<tr>
-
-<td>${user.id}</td>
-
-<td>${user.username}</td>
-
-<td>${user.role}</td>
-
-<td>
-
-<button
-onclick="deleteUser(${user.id})"
-style="
-background:#dc3545;
-padding:10px;
-">
-
-❌
-
-</button>
-
-</td>
-
-</tr>
-`;
-
-});
-
-html += `
-</table>
-
-</div>
-
-<div class="card">
-
-<h2>Результаты</h2>
-
-<table>
-
-<tr>
-<th>ID</th>
-<th>Пользователь</th>
-<th>Тест</th>
-<th>Баллы</th>
-<th>%</th>
-<th>Удалить</th>
-</tr>
-`;
-
-results.forEach(row=>{
-
-html += `
-<tr>
-
-<td>${row.id}</td>
-
-<td>${row.username}</td>
-
-<td>${row.test_name}</td>
-
-<td>${row.score}/${row.total}</td>
-
-<td>${row.percentage}%</td>
-
-<td>
-
-<button
-onclick="deleteResult(${row.id})"
-style="
-background:#dc3545;
-padding:10px;
-">
-
-❌
-
-</button>
-
-</td>
-
-</tr>
-`;
-
-});
-
-html += `
-</table>
-
-</div>
-
-</div>
-`;
-
-document.body.innerHTML = html;
-
-}
-
-const tests = {
-
-personal_finance: [
-{
-q:"Что такое ликвидность?",
-a:[
-"Способность быстро превратить актив в деньги",
-"Тип кредита",
-"Форма налога",
-"Вид страховки"
-],
-c:0
-}
-],
-
-portfolio_theory: [
-{
-q:"Что такое диверсификация?",
-a:[
-"Распределение активов",
-"Тип кредита",
-"Форма налога",
-"Метод аудита"
-],
-c:0
-}
-],
-
-econometrics: [
-{
-q:"Что изучает эконометрика?",
-a:[
-"Экономические модели и данные",
-"Только бухгалтерию",
-"Налоги",
-"Маркетинг"
-],
-c:0
-}
-],
-
-bank_accounting: [
-{
-q:"Что отражает актив банка?",
-a:[
-"Ресурсы банка",
-"Только прибыль",
-"Налоги",
-"Устав"
-],
-c:0
-}
-],
-
-bank_accounting_records: [
-{
-q:"Что такое бухгалтерская проводка?",
-a:[
-"Запись операции",
-"Вид кредита",
-"Тип депозита",
-"Форма маркетинга"
-],
-c:0
-}
-],
-
-green_economy: [
-{
-q:"Что такое зеленая экономика?",
-a:[
-"Экологически устойчивое развитие",
-"Тип банка",
-"Вид кредита",
-"Метод учета"
-],
-c:0
-}
-],
-
-money_and_banks: [
-{
-q:"Главная функция Центрального банка?",
-a:[
-"Монетарная политика",
-"Продажа товаров",
-"Страхование",
-"Маркетинг"
-],
-c:0
-}
-],
-
-finance: [
-{
-q:"Что такое инфляция?",
-a:[
-"Рост цен",
-"Снижение зарплат",
-"Рост налогов",
-"Укрепление валюты"
-],
-c:0
-}
-]
-
-};
-
-function shuffleArray(array){
-
-const arr=[...array];
-
-for(let i=arr.length-1;i>0;i--){
-
-const j=Math.floor(
-Math.random()*(i+1)
-);
-
-[arr[i],arr[j]]=
-[arr[j],arr[i]];
-
-}
-
-return arr;
-
-}
-
-let currentTest = null;
-
-let questions = [];
-
-let currentIndex = 0;
-
-let score = 0;
-
-let wrongQuestions = [];
-
-document
-.getElementById('login-btn')
-.onclick = async()=>{
-
-const username =
-document
-.getElementById('username')
-.value;
-
-const password =
-document
-.getElementById('password')
-.value;
-
-const {data,error} =
-await supabaseClient
-.from('users')
-.select('*')
-.eq('username',username)
-.eq('password',password)
-.single();
-
-if(error || !data){
-
-alert(
-'Неверный логин или пароль'
-);
-
-return;
-
-}
-
-currentUser = data;
-  localStorage.setItem(
-'user',
-JSON.stringify(data)
-);
-
-if(currentUser.role==='admin'){
-
-const openAdmin =
-confirm(
-'Открыть админ-панель?'
-);
-
-if(openAdmin){
-
-openAdminPanel();
-
-return;
-
-}
-
-}
-
-showTestSelection();
-
-};
-
-function startTest(testKey){
-
-currentTest = testKey;
-
-questions =
-shuffleArray(
-tests[testKey]
-);
-
-currentIndex = 0;
-
-score = 0;
-
-wrongQuestions = [];
-
-document
-.getElementById('login-card')
-.classList.add('hidden');
-
-document
-.getElementById('quiz-card')
-.classList.remove('hidden');
-
-document.querySelector(
-'#quiz-card h1'
-).innerText =
-getTestTitle(testKey);
-
-loadQuestion();
-
-}
-
-function getTestTitle(key){
-
-const titles = {
-
-personal_finance:
-'Персональные финансы',
-
-portfolio_theory:
-'Теория портфеля',
-
-econometrics:
-'Эконометрика',
-
-bank_accounting:
-'Бухгалтерия в банке',
-
-bank_accounting_records:
-'Бухгалтерский учет в банке',
-
-green_economy:
-'Зеленая экономика',
-
-money_and_banks:
-'Деньги и банки',
-
-finance:
-'Финансы'
-
-};
-
-return titles[key] || 'Тест';
-
-}
-
-function showTestSelection(){
-
-document
-.getElementById('login-card')
-.classList.add('hidden');
-
-document
-.getElementById('quiz-card')
-.classList.add('hidden');
-
-document
-.getElementById('result-card')
-.classList.add('hidden');
-
-let existing =
-document.getElementById(
-'test-selection'
-);
-
-if(existing){
-
-existing.remove();
-
-}
-
-const div =
-document.createElement('div');
-
-div.id = 'test-selection';
-
-div.className = 'card';
-
-div.innerHTML = `
-
-<h1>Выберите тест</h1>
-
-<button onclick="startTest('personal_finance')">
-Персональные финансы
-</button>
-
-<button onclick="startTest('portfolio_theory')">
-Теория портфеля
-</button>
-
-<button onclick="startTest('econometrics')">
-Эконометрика
-</button>
-
-<button onclick="startTest('bank_accounting')">
-Бухгалтерия в банке
-</button>
-
-<button onclick="startTest('bank_accounting_records')">
-Бухгалтерский учет в банке
-</button>
-
-<button onclick="startTest('green_economy')">
-Зеленая экономика
-</button>
-
-<button onclick="startTest('money_and_banks')">
-Деньги и банки
-</button>
-
-<button onclick="startTest('finance')">
-Финансы
-</button>
-
-<button
-onclick="logout()"
-style="background:#dc3545;">
-🚪 Выйти
-</button>
-
-`;
-
-document
-.querySelector('.container')
-.appendChild(div);
-
-}
-function loadQuestion(){
-const q =
-questions[currentIndex];
-
-document
-.getElementById('counter')
-.innerText =
-`Вопрос ${currentIndex+1}
-из ${questions.length}`;
-
-document
-.getElementById('question')
-.innerText = q.q;
-
-document
-.getElementById('progress-bar')
-.style.width =
-`${(currentIndex/questions.length)*100}%`;
-
-const options =
-document
-.getElementById('options');
-
-options.innerHTML='';
-
-q.a.forEach(
-(option,index)=>{
-
-const btn =
-document.createElement('button');
-
-btn.className='option';
-
-btn.innerText=option;
-
-btn.onclick=()=>
-selectAnswer(
-btn,
-index===q.c
-);
-
-options.appendChild(btn);
-
-});
-
-}
-
-function selectAnswer(
-btn,
-isCorrect
-){
-
-const buttons =
-document
-.querySelectorAll('.option');
-
-buttons.forEach(
-b=>b.disabled=true
-);
-
-if(isCorrect){
-
-btn.classList.add('correct');
-
-score++;
-
-}else{
-
-btn.classList.add('wrong');
-
-wrongQuestions.push(
-questions[currentIndex]
-);
-
-buttons.forEach((b,i)=>{
-
-if(
-i===questions[currentIndex].c
-){
-b.classList.add('correct');
-}
-
-});
-
-}
-
-document
-.getElementById('next-btn')
-.classList.remove('hidden');
-
-}
-
-document
-.getElementById('next-btn')
-.onclick = ()=>{
-
-currentIndex++;
-
-if(
-currentIndex<questions.length
-){
-
-loadQuestion();
-
-document
-.getElementById('next-btn')
-.classList.add('hidden');
-
-}else{
-
-finishQuiz();
-
-}
-
-};
-
-async function saveResult(){
-
-const total =
-questions.length;
-
-const percentage =
-((score/total)*100)
-.toFixed(2);
-
-await supabaseClient
-.from('results')
-.insert([
-{
-username:
-currentUser.username,
-
-test_name:getTestTitle(currentTest),
-
-score:score,
-
-total:total,
-
-percentage:percentage
-}
-]);
-
-}
-
-async function finishQuiz(){
-
-await saveResult();
-
-document
-.getElementById('quiz-card')
-.classList.add('hidden');
-
-document
-.getElementById('result-card')
-.classList.remove('hidden');
-
-document
-.getElementById('score')
-.innerText =
-`${score} / ${questions.length}`;
-
-}
-
-document
-.getElementById('restart-btn')
-.onclick = ()=>{
-
-location.reload();
-
-};
-
-document
-.getElementById('wrong-btn')
-.onclick = ()=>{
-
-if(!wrongQuestions.length){
-
-alert('Ошибок нет');
-
-return;
-
-}
-
-questions =
-shuffleArray(
-wrongQuestions
-);
-
-currentIndex = 0;
-
-score = 0;
-
-wrongQuestions = [];
-
-document
-.getElementById('result-card')
-.classList.add('hidden');
-
-document
-.getElementById('quiz-card')
-.classList.remove('hidden');
-
-loadQuestion();
-
-};
-const savedUser =
-localStorage.getItem('user');
-
-if(savedUser){
-
-currentUser =
-JSON.parse(savedUser);
-
-if(currentUser.role==='admin'){
-
-openAdminPanel();
-
-}else{
-
-showTestSelection();
-
-}
-
-}
-</script>
-
+  <div class="container">
+    <div id="screen-login" class="card"></div>
+    <div id="screen-selection" class="card hidden"></div>
+    <div id="screen-quiz" class="card hidden"></div>
+    <div id="screen-result" class="card hidden"></div>
+    <div id="screen-admin" class="card hidden"></div>
+  </div>
+
+  <script>
+    const SUPABASE_URL = 'https://enthswnpuhvmxyjfltms.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVudGhzd25wdWh2bXh5amZsdG1zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzNDA3MzcsImV4cCI6MjA5MzkxNjczN30.2KNWdop3LP5RwDqNuK_ZDnWQAoyKQ-gJQ0Z0FXc6XPY';
+
+    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const screenLogin = document.getElementById('screen-login');
+    const screenSelection = document.getElementById('screen-selection');
+    const screenQuiz = document.getElementById('screen-quiz');
+    const screenResult = document.getElementById('screen-result');
+    const screenAdmin = document.getElementById('screen-admin');
+
+    const TEST_TITLES = {
+      personal_finance: 'Персональные финансы',
+      portfolio_theory: 'Теория портфеля',
+      econometrics: 'Эконометрика',
+      bank_accounting: 'Бухгалтерия в банке',
+      bank_accounting_records: 'Бухгалтерский учет в банке',
+      green_economy: 'Зеленая экономика',
+      money_and_banks: 'Деньги и банки',
+      finance: 'Финансы'
+    };
+
+    const tests = {
+      personal_finance: [
+        {
+          q: 'Что такое ликвидность?',
+          a: [
+            'Способность быстро превратить актив в деньги',
+            'Тип кредита',
+            'Форма налога',
+            'Вид страховки'
+          ],
+          c: 0
+        }
+      ],
+      portfolio_theory: [
+        {
+          q: 'Что такое диверсификация?',
+          a: [
+            'Распределение активов',
+            'Тип кредита',
+            'Форма налога',
+            'Метод аудита'
+          ],
+          c: 0
+        }
+      ],
+      econometrics: [
+        {
+          q: 'Что изучает эконометрика?',
+          a: [
+            'Экономические модели и данные',
+            'Только бухгалтерию',
+            'Налоги',
+            'Маркетинг'
+          ],
+          c: 0
+        }
+      ],
+      bank_accounting: [
+        {
+          q: 'Что отражает актив банка?',
+          a: [
+            'Ресурсы банка',
+            'Только прибыль',
+            'Налоги',
+            'Устав'
+          ],
+          c: 0
+        }
+      ],
+      bank_accounting_records: [
+        {
+          q: 'Что такое бухгалтерская проводка?',
+          a: [
+            'Запись операции',
+            'Вид кредита',
+            'Тип депозита',
+            'Форма маркетинга'
+          ],
+          c: 0
+        }
+      ],
+      green_economy: [
+        {
+          q: 'Что такое зеленая экономика?',
+          a: [
+            'Экологически устойчивое развитие',
+            'Тип банка',
+            'Вид кредита',
+            'Метод учета'
+          ],
+          c: 0
+        }
+      ],
+      money_and_banks: [
+        {
+          q: 'Главная функция Центрального банка?',
+          a: [
+            'Монетарная политика',
+            'Продажа товаров',
+            'Страхование',
+            'Маркетинг'
+          ],
+          c: 0
+        }
+      ],
+      finance: [
+        {
+          q: 'Что такое инфляция?',
+          a: [
+            'Рост цен',
+            'Снижение зарплат',
+            'Рост налогов',
+            'Укрепление валюты'
+          ],
+          c: 0
+        }
+      ]
+    };
+
+    const state = {
+      currentUser: null,
+      currentTestKey: null,
+      questions: [],
+      currentIndex: 0,
+      score: 0,
+      wrongQuestions: []
+    };
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function cloneQuestion(q) {
+      return {
+        q: q.q,
+        a: Array.isArray(q.a) ? [...q.a] : [],
+        c: q.c
+      };
+    }
+
+    function shuffleArray(array) {
+      const arr = [...array];
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    }
+
+    function showScreen(activeId) {
+      const screens = [screenLogin, screenSelection, screenQuiz, screenResult, screenAdmin];
+      screens.forEach(s => s.classList.add('hidden'));
+      document.getElementById(activeId).classList.remove('hidden');
+    }
+
+    function setSavedUser(user) {
+      localStorage.setItem('user', JSON.stringify(user));
+    }
+
+    function clearSavedUser() {
+      localStorage.removeItem('user');
+    }
+
+    function getTestTitle(key) {
+      return TEST_TITLES[key] || 'Тест';
+    }
+
+    function renderLogin() {
+      showScreen('screen-login');
+
+      screenLogin.innerHTML = `
+        <h1>Вход в систему</h1>
+        <div class="muted">Введите логин и пароль</div>
+        <input id="username" placeholder="Логин" autocomplete="username" />
+        <input id="password" type="password" placeholder="Пароль" autocomplete="current-password" />
+        <button id="login-btn" class="btn-ok">Войти</button>
+        <div class="small-note">Если у вас уже есть аккаунт, вход сохранится после обновления страницы.</div>
+      `;
+
+      document.getElementById('login-btn').addEventListener('click', handleLogin);
+      document.getElementById('password').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') handleLogin();
+      });
+    }
+
+    function renderSelection() {
+      showScreen('screen-selection');
+
+      screenSelection.innerHTML = `
+        <div class="screen-top">
+          <div class="left">
+            <h1 class="title-left">Выберите тест</h1>
+            <div class="subtitle-left">Пользователь: ${escapeHtml(state.currentUser.username)}</div>
+          </div>
+          <div class="right">
+            <button class="btn-bad" onclick="logout()">🚪 Выйти</button>
+          </div>
+        </div>
+
+        <div class="grid">
+          <button onclick="startTest('personal_finance')">Персональные финансы</button>
+          <button onclick="startTest('portfolio_theory')">Теория портфеля</button>
+          <button onclick="startTest('econometrics')">Эконометрика</button>
+          <button onclick="startTest('bank_accounting')">Бухгалтерия в банке</button>
+          <button onclick="startTest('bank_accounting_records')">Бухгалтерский учет в банке</button>
+          <button onclick="startTest('green_economy')">Зеленая экономика</button>
+          <button onclick="startTest('money_and_banks')">Деньги и банки</button>
+          <button onclick="startTest('finance')">Финансы</button>
+        </div>
+
+        <div class="small-note">Выберите предмет, чтобы начать тестирование.</div>
+      `;
+    }
+
+    function renderQuizShell() {
+      showScreen('screen-quiz');
+
+      screenQuiz.innerHTML = `
+        <div class="screen-top">
+          <div class="left">
+            <h1 id="quiz-title" class="title-left">${escapeHtml(getTestTitle(state.currentTestKey))}</h1>
+            <div class="subtitle-left">Пользователь: ${escapeHtml(state.currentUser.username)}</div>
+          </div>
+          <div class="right">
+            <button class="btn-bad" onclick="logout()">🚪 Выйти</button>
+          </div>
+        </div>
+
+        <div id="counter"></div>
+        <div class="progress"><div class="progress-bar" id="progress-bar"></div></div>
+        <div id="question"></div>
+        <div id="options"></div>
+        <button id="next-btn" class="hidden btn-ok" onclick="nextQuestion()">Следующий вопрос</button>
+      `;
+    }
+
+    function renderResult() {
+      showScreen('screen-result');
+
+      const total = state.questions.length;
+      const wrong = total - state.score;
+      const percent = total ? Math.round((state.score / total) * 100) : 0;
+
+      let text = 'Результат сохранён.';
+      if (percent >= 90) {
+        text = 'Отличный результат.';
+      } else if (percent >= 70) {
+        text = 'Хороший результат.';
+      } else if (percent >= 50) {
+        text = 'Неплохо, но есть что подтянуть.';
+      } else {
+        text = 'Лучше пройти тест ещё раз после повторения материала.';
+      }
+
+      screenResult.innerHTML = `
+        <div class="screen-top">
+          <div class="left">
+            <h1 class="title-left">Тест завершён</h1>
+            <div class="subtitle-left">Пользователь: ${escapeHtml(state.currentUser.username)}</div>
+          </div>
+          <div class="right">
+            <button class="btn-bad" onclick="logout()">🚪 Выйти</button>
+          </div>
+        </div>
+
+        <div class="result-score">${state.score} / ${total}</div>
+        <div class="result-meta">Правильных: ${state.score}, ошибок: ${wrong}, процент: ${percent}%</div>
+        <div class="muted">${escapeHtml(text)}</div>
+
+        <div class="toolbar">
+          <button class="btn-gray" onclick="backToSelection()">К выбору тестов</button>
+          <button id="repeat-wrong-btn" class="btn-ok" onclick="repeatWrong()">Повторить ошибки (${state.wrongQuestions.length})</button>
+        </div>
+
+        <div class="small-note">Если ошибок нет, кнопка повторения просто ничего не запустит.</div>
+      `;
+
+      if (!state.wrongQuestions.length) {
+        const btn = document.getElementById('repeat-wrong-btn');
+        btn.disabled = true;
+        btn.style.opacity = '0.55';
+        btn.style.pointerEvents = 'none';
+      }
+    }
+
+    function renderAdminPanel(users = [], results = []) {
+      showScreen('screen-admin');
+
+      const userRows = users.length
+        ? users.map(user => `
+            <tr>
+              <td>${escapeHtml(user.id)}</td>
+              <td>${escapeHtml(user.username)}</td>
+              <td>${escapeHtml(user.role)}</td>
+              <td>
+                ${user.username === state.currentUser.username ? '' : `<button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteUser(${user.id})">❌</button>`}
+              </td>
+            </tr>
+          `).join('')
+        : `<tr><td colspan="4">Пользователей пока нет</td></tr>`;
+
+      const resultRows = results.length
+        ? results.map(row => `
+            <tr>
+              <td>${escapeHtml(row.id)}</td>
+              <td>${escapeHtml(row.username)}</td>
+              <td>${escapeHtml(row.test_name)}</td>
+              <td>${escapeHtml(row.score)}/${escapeHtml(row.total)}</td>
+              <td>${escapeHtml(row.percentage)}%</td>
+              <td><button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteResult(${row.id})">❌</button></td>
+            </tr>
+          `).join('')
+        : `<tr><td colspan="6">Результатов пока нет</td></tr>`;
+
+      screenAdmin.innerHTML = `
+        <div class="screen-top">
+          <div class="left">
+            <h1 class="title-left">Админ-панель</h1>
+            <div class="subtitle-left">Администратор: ${escapeHtml(state.currentUser.username)}</div>
+          </div>
+          <div class="right">
+            <button class="btn-bad" onclick="logout()">🚪 Выйти</button>
+          </div>
+        </div>
+
+        <div class="admin-section card" style="box-shadow:none; margin-top:0; padding:0;">
+          <h2>Создать пользователя</h2>
+          <input id="new-username" placeholder="Логин" autocomplete="off" />
+          <input id="new-password" placeholder="Пароль" autocomplete="off" />
+          <select id="new-role">
+            <option value="student">student</option>
+            <option value="admin">admin</option>
+          </select>
+          <button class="btn-ok" onclick="createUser()">Создать пользователя</button>
+        </div>
+
+        <div class="admin-section">
+          <h2>Пользователи</h2>
+          <div class="table-wrap">
+            <table>
+              <tr>
+                <th>ID</th>
+                <th>Логин</th>
+                <th>Роль</th>
+                <th>Удалить</th>
+              </tr>
+              ${userRows}
+            </table>
+          </div>
+        </div>
+
+        <div class="admin-section">
+          <h2>Результаты</h2>
+          <div class="table-wrap">
+            <table>
+              <tr>
+                <th>ID</th>
+                <th>Пользователь</th>
+                <th>Тест</th>
+                <th>Баллы</th>
+                <th>%</th>
+                <th>Удалить</th>
+              </tr>
+              ${resultRows}
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    async function handleLogin() {
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value.trim();
+
+      if (!username || !password) {
+        alert('Введите логин и пароль');
+        return;
+      }
+
+      const { data, error } = await supabaseClient
+        .from('users')
+        .select('*')
+        .eq('username', username)
+        .eq('password', password)
+        .single();
+
+      if (error || !data) {
+        alert('Неверный логин или пароль');
+        return;
+      }
+
+      state.currentUser = data;
+      setSavedUser(data);
+
+      if (data.role === 'admin') {
+        await openAdminPanel();
+      } else {
+        renderSelection();
+      }
+    }
+
+    function startTest(testKey) {
+      if (!tests[testKey]) {
+        alert('Тест не найден');
+        return;
+      }
+
+      state.currentTestKey = testKey;
+      state.questions = shuffleArray(tests[testKey].map(cloneQuestion));
+      state.currentIndex = 0;
+      state.score = 0;
+      state.wrongQuestions = [];
+
+      renderQuizShell();
+      loadQuestion();
+    }
+
+    function loadQuestion() {
+      if (!state.questions.length) {
+        finishQuiz();
+        return;
+      }
+
+      const q = state.questions[state.currentIndex];
+      const total = state.questions.length;
+
+      document.getElementById('quiz-title').innerText = getTestTitle(state.currentTestKey);
+      document.getElementById('counter').innerText = `Вопрос ${state.currentIndex + 1} из ${total}`;
+      document.getElementById('progress-bar').style.width = `${(state.currentIndex / total) * 100}%`;
+      document.getElementById('question').innerText = q.q;
+
+      const options = document.getElementById('options');
+      options.innerHTML = '';
+
+      const shuffledOptions = shuffleArray(
+        q.a.map((text, idx) => ({
+          text,
+          correct: idx === q.c
+        }))
+      );
+
+      shuffledOptions.forEach(item => {
+        const btn = document.createElement('button');
+        btn.className = 'option';
+        btn.type = 'button';
+        btn.textContent = item.text;
+        btn.dataset.correct = item.correct ? '1' : '0';
+        btn.addEventListener('click', () => selectAnswer(btn, item.correct));
+        options.appendChild(btn);
+      });
+
+      document.getElementById('next-btn').classList.add('hidden');
+    }
+
+    function selectAnswer(selectedBtn, isCorrect) {
+      const buttons = document.querySelectorAll('#options .option');
+      buttons.forEach(btn => btn.disabled = true);
+
+      buttons.forEach(btn => {
+        if (btn.dataset.correct === '1') {
+          btn.classList.add('correct');
+        }
+      });
+
+      if (!isCorrect) {
+        selectedBtn.classList.add('wrong');
+        state.wrongQuestions.push(cloneQuestion(state.questions[state.currentIndex]));
+      } else {
+        state.score++;
+      }
+
+      document.getElementById('next-btn').classList.remove('hidden');
+    }
+
+    function nextQuestion() {
+      state.currentIndex++;
+
+      if (state.currentIndex < state.questions.length) {
+        loadQuestion();
+      } else {
+        finishQuiz();
+      }
+    }
+
+    async function saveResult() {
+      const total = state.questions.length || 1;
+      const percentage = Number(((state.score / total) * 100).toFixed(2));
+
+      const { error } = await supabaseClient
+        .from('results')
+        .insert([
+          {
+            username: state.currentUser.username,
+            test_name: getTestTitle(state.currentTestKey),
+            score: state.score,
+            total: state.questions.length,
+            percentage: percentage
+          }
+        ]);
+
+      if (error) {
+        console.error('Ошибка сохранения результата:', error);
+      }
+    }
+
+    async function finishQuiz() {
+      await saveResult();
+      renderResult();
+    }
+
+    function repeatWrong() {
+      if (!state.wrongQuestions.length) {
+        alert('Ошибок нет');
+        return;
+      }
+
+      state.questions = shuffleArray(state.wrongQuestions.map(cloneQuestion));
+      state.currentIndex = 0;
+      state.score = 0;
+      state.wrongQuestions = [];
+
+      renderQuizShell();
+      loadQuestion();
+    }
+
+    function backToSelection() {
+      state.currentTestKey = null;
+      state.questions = [];
+      state.currentIndex = 0;
+      state.score = 0;
+      state.wrongQuestions = [];
+      renderSelection();
+    }
+
+    function logout() {
+      clearSavedUser();
+      state.currentUser = null;
+      state.currentTestKey = null;
+      state.questions = [];
+      state.currentIndex = 0;
+      state.score = 0;
+      state.wrongQuestions = [];
+      renderLogin();
+    }
+
+    async function createUser() {
+      const username = document.getElementById('new-username').value.trim();
+      const password = document.getElementById('new-password').value.trim();
+      const role = document.getElementById('new-role').value;
+
+      if (!username || !password) {
+        alert('Заполните поля');
+        return;
+      }
+
+      const { error } = await supabaseClient
+        .from('users')
+        .insert([
+          { username, password, role }
+        ]);
+
+      if (error) {
+        alert('Ошибка создания пользователя');
+        console.error(error);
+        return;
+      }
+
+      await openAdminPanel();
+      alert('Пользователь создан');
+    }
+
+    async function deleteUser(id) {
+      const ok = confirm('Удалить пользователя?');
+      if (!ok) return;
+
+      const { error } = await supabaseClient
+        .from('users')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        alert('Ошибка удаления пользователя');
+        console.error(error);
+        return;
+      }
+
+      await openAdminPanel();
+    }
+
+    async function deleteResult(id) {
+      const ok = confirm('Удалить результат?');
+      if (!ok) return;
+
+      const { error } = await supabaseClient
+        .from('results')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        alert('Ошибка удаления результата');
+        console.error(error);
+        return;
+      }
+
+      await openAdminPanel();
+    }
+
+    async function openAdminPanel() {
+      showScreen('screen-admin');
+
+      const [usersResponse, resultsResponse] = await Promise.all([
+        supabaseClient.from('users').select('*').order('id', { ascending: true }),
+        supabaseClient.from('results').select('*').order('id', { ascending: false })
+      ]);
+
+      const users = usersResponse.data || [];
+      const results = resultsResponse.data || [];
+
+      renderAdminPanel(users, results);
+    }
+
+    function init() {
+      const savedUser = localStorage.getItem('user');
+
+      if (savedUser) {
+        try {
+          const parsed = JSON.parse(savedUser);
+          state.currentUser = parsed;
+
+          if (parsed.role === 'admin') {
+            openAdminPanel();
+          } else {
+            renderSelection();
+          }
+          return;
+        } catch (e) {
+          localStorage.removeItem('user');
+        }
+      }
+
+      renderLogin();
+    }
+
+    init();
+  </script>
 </body>
 </html>
