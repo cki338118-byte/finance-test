@@ -98,7 +98,7 @@
     }
 
     .screen-top .left { flex: 1; min-width: 0; }
-    .screen-top .right { width: 160px; flex: 0 0 160px; }
+    .screen-top .right { width: auto; flex: 0 0 auto; display: flex; gap: 10px; }
     .screen-top .title-left { text-align: left; margin: 0; }
     .screen-top .subtitle-left { text-align: left; margin: 4px 0 0 0; color: var(--muted); font-size: 14px; }
 
@@ -224,7 +224,8 @@
       .card { padding: 18px; border-radius: 16px; }
       .grid { grid-template-columns: 1fr; }
       .screen-top { flex-direction: column; align-items: stretch; }
-      .screen-top .right { width: 100%; flex: 1 1 auto; }
+      .screen-top .right { width: 100%; flex: 1 1 auto; justify-content: stretch; }
+      .screen-top .right button { flex: 1; }
       #question { font-size: 21px; }
       .result-score { font-size: 36px; }
     }
@@ -337,6 +338,30 @@
       });
     }
 
+    async function changeMyPassword() {
+      const newPassword = prompt('Введите новый пароль (оставьте пустым для отмены):');
+      if (!newPassword || newPassword.trim() === '') return;
+
+      const { error } = await supabaseClient
+        .from('users')
+        .update({ password: newPassword.trim() })
+        .eq('id', state.currentUser.id);
+
+      if (error) {
+        alert('Ошибка при смене пароля. Попробуйте еще раз.');
+        console.error(error);
+      } else {
+        alert('Пароль успешно изменен!');
+        state.currentUser.password = newPassword.trim();
+        setSavedUser(state.currentUser);
+        
+        // Если это админ, обновляем панель, чтобы новый пароль отобразился в таблице
+        if (state.currentUser.role === 'admin') {
+          openAdminPanel();
+        }
+      }
+    }
+
     async function renderSelection() {
       showScreen('screen-selection');
       const now = new Date().toISOString();
@@ -362,6 +387,7 @@
             <div class="subtitle-left">Пользователь: ${escapeHtml(state.currentUser.username)}</div>
           </div>
           <div class="right">
+            <button class="btn-gray" onclick="changeMyPassword()">🔑 Пароль</button>
             <button class="btn-bad" onclick="logout()">🚪 Выйти</button>
           </div>
         </div>
@@ -468,19 +494,20 @@
         </tr>
       `).join('');
 
-      // Генерация таблицы пользователей
+      // Генерация таблицы пользователей (ТЕПЕРЬ С ПАРОЛЯМИ)
       const userRows = users.length
         ? users.map(user => `
             <tr>
               <td>${escapeHtml(user.id)}</td>
               <td>${escapeHtml(user.username)}</td>
+              <td>${escapeHtml(user.password)}</td>
               <td>${escapeHtml(user.role)}</td>
               <td>
                 ${user.username === state.currentUser.username ? '' : `<button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteUser(${user.id})">❌</button>`}
               </td>
             </tr>
           `).join('')
-        : `<tr><td colspan="4">Пользователей пока нет</td></tr>`;
+        : `<tr><td colspan="5">Пользователей пока нет</td></tr>`;
 
       // Генерация таблицы доступов (С ФИЛЬТРОМ)
       const accessRows = accesses.length
@@ -520,6 +547,7 @@
             <div class="subtitle-left">Администратор: ${escapeHtml(state.currentUser.username)}</div>
           </div>
           <div class="right">
+            <button class="btn-gray" onclick="changeMyPassword()">🔑 Пароль</button>
             <button class="btn-bad" onclick="logout()">🚪 Выйти</button>
           </div>
         </div>
@@ -555,7 +583,7 @@
           <h2>Список пользователей</h2>
           <div class="table-wrap">
             <table>
-              <tr><th>ID</th><th>Логин</th><th>Роль</th><th>Удалить</th></tr>
+              <tr><th>ID</th><th>Логин</th><th>Пароль</th><th>Роль</th><th>Удалить</th></tr>
               ${userRows}
             </table>
           </div>
@@ -778,6 +806,7 @@
       renderQuizShell();
       loadQuestion();
     }
+    
     function backToSelection() {
       state.currentTestKey = null;
       state.questions = [];
