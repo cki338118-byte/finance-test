@@ -281,7 +281,10 @@
       currentTestKey: null,
       questions: [],
       currentIndex: 0,
-      score: 0
+      score: 0,
+      wrongQuestions: [],
+      isRepeatMode: false
+    };
     };
 
     function escapeHtml(value) {
@@ -422,11 +425,13 @@
       const wrong = total - state.score;
       const percent = total ? Math.round((state.score / total) * 100) : 0;
 
-      let text = 'Результат сохранён.';
-      if (percent >= 90) text = 'Отличный результат.';
-      else if (percent >= 70) text = 'Хороший результат.';
-      else if (percent >= 50) text = 'Неплохо, но есть что подтянуть.';
-      else text = 'Вам следует повторить материал.';
+      let text = state.isRepeatMode ? 'Работа над ошибками (в базу не сохраняется).' : 'Результат сохранён.';
+      if (!state.isRepeatMode) {
+        if (percent >= 90) text += ' Отличный результат.';
+        else if (percent >= 60) text += ' проходной.';
+        else if (percent >= 0) text += ' пересдача.';
+        else text += ' .';
+      }
 
       screenResult.innerHTML = `
         <div class="screen-top">
@@ -445,6 +450,7 @@
 
         <div class="toolbar">
           <button class="btn-gray" onclick="backToSelection()">К выбору тестов</button>
+          ${state.wrongQuestions.length > 0 && !state.isRepeatMode ? `<button class="btn-ok" onclick="repeatWrong()">Повторить ошибки (${state.wrongQuestions.length})</button>` : ''}
         </div>
       `;
     }
@@ -667,6 +673,8 @@
       state.questions = shuffleArray(tests[testKey].map(cloneQuestion));
       state.currentIndex = 0;
       state.score = 0;
+      state.wrongQuestions = [];
+      state.isRepeatMode = false;
 
       renderQuizShell();
       loadQuestion();
@@ -721,6 +729,9 @@
 
       if (!isCorrect) {
         selectedBtn.classList.add('wrong');
+        if (!state.isRepeatMode) {
+          state.wrongQuestions.push(cloneQuestion(state.questions[state.currentIndex]));
+        }
       } else {
         state.score++;
       }
@@ -758,11 +769,21 @@
       }
     }
 
-    async function finishQuiz() {
-      await saveResult();
+   async function finishQuiz() {
+      if (!state.isRepeatMode) {
+        await saveResult();
+      }
       renderResult();
     }
 
+   function repeatWrong() {
+      state.isRepeatMode = true;
+      state.questions = shuffleArray(state.wrongQuestions.map(cloneQuestion));
+      state.currentIndex = 0;
+      state.score = 0;
+      renderQuizShell();
+      loadQuestion();
+    }
     function backToSelection() {
       state.currentTestKey = null;
       state.questions = [];
