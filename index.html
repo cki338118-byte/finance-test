@@ -8,6 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
 <style>
+
 body{
   margin:0;
   font-family:Arial,sans-serif;
@@ -103,6 +104,24 @@ button{
 .center{
   text-align:center;
 }
+
+table{
+  width:100%;
+  border-collapse:collapse;
+  margin-top:20px;
+}
+
+th,td{
+  border:1px solid #ddd;
+  padding:12px;
+  text-align:center;
+}
+
+th{
+  background:#1368CE;
+  color:white;
+}
+
 </style>
 </head>
 <body>
@@ -114,37 +133,47 @@ button{
 <h1>Вход в систему</h1>
 
 <input id="username" placeholder="Логин">
-<input id="password" type="password" placeholder="Пароль">
 
-<button id="login-btn">Войти</button>
+<input id="password"
+type="password"
+placeholder="Пароль">
+
+<button id="login-btn">
+Войти
+</button>
 
 </div>
 
-<div id="quiz-card" class="card hidden">
+<div id="quiz-card"
+class="card hidden">
 
 <h1>Персональные финансы</h1>
 
 <div id="counter"></div>
 
 <div class="progress">
-<div class="progress-bar" id="progress-bar"></div>
+<div class="progress-bar"
+id="progress-bar"></div>
 </div>
 
 <div id="question"></div>
 
 <div id="options"></div>
 
-<button id="next-btn" class="hidden">
+<button id="next-btn"
+class="hidden">
 Следующий вопрос
 </button>
 
 </div>
 
-<div id="result-card" class="card hidden">
+<div id="result-card"
+class="card hidden">
 
 <h1>Тест завершен</h1>
 
-<h2 id="score" class="center"></h2>
+<h2 id="score"
+class="center"></h2>
 
 <button id="restart-btn">
 Начать сначала
@@ -163,18 +192,71 @@ button{
 const SUPABASE_URL =
 'https://enthswnpuhvmxyjfltms.supabase.co';
 
-const SUPABASE_KEY =
-'https://enthswnpuhvmxyjfltms.supabase.co';
+const SUPABASE_ANON_KEY =
+'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVudGhzd25wdWh2bXh5amZsdG1zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzNDA3MzcsImV4cCI6MjA5MzkxNjczN30.2KNWdop3LP5RwDqNuK_ZDnWQAoyKQ-gJQ0Z0FXc6XPY';
 
 const supabaseClient =
 supabase.createClient(
 SUPABASE_URL,
-'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVudGhzd25wdWh2bXh5amZsdG1zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzNDA3MzcsImV4cCI6MjA5MzkxNjczN30.2KNWdop3LP5RwDqNuK_ZDnWQAoyKQ-gJQ0Z0FXc6XPY'
+SUPABASE_ANON_KEY
 );
 
-let currentUser=null;
+let currentUser = null;
 
-const rawQuestions=[
+async function openAdminPanel(){
+
+const { data } =
+await supabaseClient
+.from('results')
+.select('*')
+.order('id',
+{ ascending:false });
+
+let html = `
+<div class="container">
+<div class="card">
+
+<h1>Админ-панель</h1>
+
+<table>
+
+<tr>
+<th>Пользователь</th>
+<th>Тест</th>
+<th>Баллы</th>
+<th>Процент</th>
+</tr>
+`;
+
+data.forEach(row=>{
+
+html += `
+<tr>
+<td>${row.username}</td>
+<td>${row.test_name}</td>
+<td>${row.score}/${row.total}</td>
+<td>${row.percentage}%</td>
+</tr>
+`;
+
+});
+
+html += `
+</table>
+
+<button onclick="location.reload()">
+Назад
+</button>
+
+</div>
+</div>
+`;
+
+document.body.innerHTML = html;
+
+}
+
+const rawQuestions = [
 
 {
 q:"Что такое ликвидность?",
@@ -206,9 +288,12 @@ const arr=[...array];
 
 for(let i=arr.length-1;i>0;i--){
 
-const j=Math.floor(Math.random()*(i+1));
+const j=Math.floor(
+Math.random()*(i+1)
+);
 
-[arr[i],arr[j]]=[arr[j],arr[i]];
+[arr[i],arr[j]]=
+[arr[j],arr[i]];
 
 }
 
@@ -216,23 +301,31 @@ return arr;
 
 }
 
-let questions=shuffleArray(rawQuestions);
+let questions =
+shuffleArray(rawQuestions);
 
-let currentIndex=0;
-let score=0;
-let wrongQuestions=[];
+let currentIndex = 0;
+
+let score = 0;
+
+let wrongQuestions = [];
 
 document
 .getElementById('login-btn')
-.onclick=async()=>{
+.onclick = async()=>{
 
-const username=
-document.getElementById('username').value;
+const username =
+document
+.getElementById('username')
+.value;
 
-const password=
-document.getElementById('password').value;
+const password =
+document
+.getElementById('password')
+.value;
 
-const {data,error}=await supabaseClient
+const {data,error} =
+await supabaseClient
 .from('users')
 .select('*')
 .eq('username',username)
@@ -241,13 +334,32 @@ const {data,error}=await supabaseClient
 
 if(error || !data){
 
-alert('Неверный логин или пароль');
+alert(
+'Неверный логин или пароль'
+);
 
 return;
 
 }
 
-currentUser=data;
+currentUser = data;
+
+if(currentUser.role==='admin'){
+
+const openAdmin =
+confirm(
+'Открыть админ-панель?'
+);
+
+if(openAdmin){
+
+openAdminPanel();
+
+return;
+
+}
+
+}
 
 document
 .getElementById('login-card')
@@ -263,30 +375,45 @@ loadQuestion();
 
 function loadQuestion(){
 
-const q=questions[currentIndex];
+const q =
+questions[currentIndex];
 
-document.getElementById('counter').innerText=
-`Вопрос ${currentIndex+1} из ${questions.length}`;
+document
+.getElementById('counter')
+.innerText =
+`Вопрос ${currentIndex+1}
+из ${questions.length}`;
 
-document.getElementById('question').innerText=q.q;
+document
+.getElementById('question')
+.innerText = q.q;
 
-document.getElementById('progress-bar').style.width=
+document
+.getElementById('progress-bar')
+.style.width =
 `${(currentIndex/questions.length)*100}%`;
 
-const options=
-document.getElementById('options');
+const options =
+document
+.getElementById('options');
 
 options.innerHTML='';
 
-q.a.forEach((option,index)=>{
+q.a.forEach(
+(option,index)=>{
 
-const btn=document.createElement('button');
+const btn =
+document.createElement('button');
 
 btn.className='option';
 
 btn.innerText=option;
 
-btn.onclick=()=>selectAnswer(btn,index===q.c);
+btn.onclick=()=>
+selectAnswer(
+btn,
+index===q.c
+);
 
 options.appendChild(btn);
 
@@ -294,12 +421,18 @@ options.appendChild(btn);
 
 }
 
-function selectAnswer(btn,isCorrect){
+function selectAnswer(
+btn,
+isCorrect
+){
 
-const buttons=
-document.querySelectorAll('.option');
+const buttons =
+document
+.querySelectorAll('.option');
 
-buttons.forEach(b=>b.disabled=true);
+buttons.forEach(
+b=>b.disabled=true
+);
 
 if(isCorrect){
 
@@ -317,10 +450,10 @@ questions[currentIndex]
 
 buttons.forEach((b,i)=>{
 
-if(i===questions[currentIndex].c){
-
+if(
+i===questions[currentIndex].c
+){
 b.classList.add('correct');
-
 }
 
 });
@@ -335,11 +468,13 @@ document
 
 document
 .getElementById('next-btn')
-.onclick=()=>{
+.onclick = ()=>{
 
 currentIndex++;
 
-if(currentIndex<questions.length){
+if(
+currentIndex<questions.length
+){
 
 loadQuestion();
 
@@ -357,19 +492,26 @@ finishQuiz();
 
 async function saveResult(){
 
-const total=questions.length;
+const total =
+questions.length;
 
-const percentage=
-((score/total)*100).toFixed(2);
+const percentage =
+((score/total)*100)
+.toFixed(2);
 
 await supabaseClient
 .from('results')
 .insert([
 {
-username:currentUser.username,
+username:
+currentUser.username,
+
 test_name:'Финансы',
+
 score:score,
+
 total:total,
+
 percentage:percentage
 }
 ]);
@@ -390,14 +532,14 @@ document
 
 document
 .getElementById('score')
-.innerText=
+.innerText =
 `${score} / ${questions.length}`;
 
 }
 
 document
 .getElementById('restart-btn')
-.onclick=()=>{
+.onclick = ()=>{
 
 location.reload();
 
@@ -405,7 +547,7 @@ location.reload();
 
 document
 .getElementById('wrong-btn')
-.onclick=()=>{
+.onclick = ()=>{
 
 if(!wrongQuestions.length){
 
@@ -415,11 +557,16 @@ return;
 
 }
 
-questions=shuffleArray(wrongQuestions);
+questions =
+shuffleArray(
+wrongQuestions
+);
 
-currentIndex=0;
-score=0;
-wrongQuestions=[];
+currentIndex = 0;
+
+score = 0;
+
+wrongQuestions = [];
 
 document
 .getElementById('result-card')
