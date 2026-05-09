@@ -1114,14 +1114,14 @@ const usernames =
 .map(cb=>cb.value);
 
 const start =
-document.getElementById(
-'access-start'
-).value;
+new Date(
+document.getElementById('access-start').value
+).toISOString();
 
 const end =
-document.getElementById(
-'access-end'
-).value;
+new Date(
+document.getElementById('access-end').value
+).toISOString();
 
 const attempts =
 parseInt(
