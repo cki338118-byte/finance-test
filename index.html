@@ -488,34 +488,106 @@
       });
     }
 
-    function renderSelection() {
-      showScreen('screen-selection');
+    async function renderSelection(){
 
-      screenSelection.innerHTML = `
-        <div class="screen-top">
-          <div class="left">
-            <h1 class="title-left">Выберите тест</h1>
-            <div class="subtitle-left">Пользователь: ${escapeHtml(state.currentUser.username)}</div>
-          </div>
-          <div class="right">
-            <button class="btn-bad" onclick="logout()">🚪 Выйти</button>
-          </div>
-        </div>
+showScreen('screen-selection');
 
-        <div class="grid">
-          <button onclick="startTest('personal_finance')">Персональные финансы</button>
-          <button onclick="startTest('portfolio_theory')">Теория портфеля</button>
-          <button onclick="startTest('econometrics')">Эконометрика</button>
-          <button onclick="startTest('bank_accounting')">Бухгалтерия в банке</button>
-          <button onclick="startTest('bank_accounting_records')">Бухгалтерский учет в банке</button>
-          <button onclick="startTest('green_economy')">Зеленая экономика</button>
-          <button onclick="startTest('money_and_banks')">Деньги и банки</button>
-          <button onclick="startTest('finance')">Финансы</button>
-        </div>
+const now =
+new Date().toISOString();
 
-        <div class="small-note">Выберите предмет, чтобы начать тестирование.</div>
-      `;
-    }
+const { data, error } =
+await supabaseClient
+.from('test_access')
+.select('*')
+.eq(
+'username',
+state.currentUser.username
+)
+.eq('is_active', true)
+.lte('start_time', now)
+.gte('end_time', now);
+
+if(error){
+
+console.log(error);
+
+screenSelection.innerHTML = `
+<h1>Ошибка доступа</h1>
+`;
+
+return;
+
+}
+
+let html = `
+<div class="screen-top">
+
+<div class="left">
+
+<h1 class="title-left">
+Доступные тесты
+</h1>
+
+<div class="subtitle-left">
+Пользователь:
+${state.currentUser.username}
+</div>
+
+</div>
+
+<div class="right">
+
+<button
+class="btn-bad"
+onclick="logout()">
+
+🚪 Выйти
+
+</button>
+
+</div>
+
+</div>
+`;
+
+if(!data.length){
+
+html += `
+<div class="muted">
+
+Сейчас вам недоступны тесты
+
+</div>
+`;
+
+}else{
+
+html += `
+<div class="grid">
+`;
+
+data.forEach(test=>{
+
+html += `
+<button
+onclick="startTest('${test.test_key}')">
+
+${getTestTitle(test.test_key)}
+
+</button>
+`;
+
+});
+
+html += `
+</div>
+`;
+
+}
+
+screenSelection.innerHTML = html;
+
+}
 
     function renderQuizShell() {
       showScreen('screen-quiz');
