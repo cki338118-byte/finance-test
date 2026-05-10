@@ -1,7 +1,12 @@
 const SUPABASE_URL = 'https://enthswnpuhvmxyjfltms.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVudGhzd25wdWh2bXh5amZsdG1zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzNDA3MzcsImV4cCI6MjA5MzkxNjczN30.2KNWdop3LP5RwDqNuK_ZDnWQAoyKQ-gJQ0Z0FXc6XPY';
 
-const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+let supabaseClient;
+try {
+  supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+} catch (error) {
+  console.error("Ошибка инициализации Supabase:", error);
+}
 
 const screenLogin = document.getElementById('screen-login');
 const screenSelection = document.getElementById('screen-selection');
@@ -56,8 +61,17 @@ function shuffleArray(array) {
 
 function showScreen(activeId) {
   const screens = [screenLogin, screenSelection, screenQuiz, screenResult, screenAdmin];
-  screens.forEach(s => s.classList.add('hidden'));
-  document.getElementById(activeId).classList.remove('hidden');
+  screens.forEach(s => {
+      if(s) s.classList.add('hidden');
+  });
+  const target = document.getElementById(activeId);
+  if(target) {
+      target.classList.remove('hidden');
+      // Добавляем индикатор загрузки, чтобы экран не был белым
+      if (activeId === 'screen-selection' || activeId === 'screen-admin') {
+          target.innerHTML = '<h2 style="text-align:center; padding: 50px; color:#6b7280;">⏳ Загрузка данных...</h2>';
+      }
+  }
 }
 
 function setSavedUser(user) {
@@ -74,7 +88,6 @@ function getTestTitle(key) {
 
 function renderLogin() {
   showScreen('screen-login');
-
   screenLogin.innerHTML = `
     <h1>Вход в систему</h1>
     <div class="muted">Введите логин и пароль</div>
@@ -106,7 +119,6 @@ async function changeMyPassword() {
     alert('Пароль успешно изменен!');
     state.currentUser.password = newPassword.trim();
     setSavedUser(state.currentUser);
-    
     if (state.currentUser.role === 'admin') openAdminPanel();
   }
 }
@@ -124,8 +136,7 @@ async function renderSelection() {
     .gte('end_time', now);
 
   if (error) {
-    console.log(error);
-    screenSelection.innerHTML = `<h1>Ошибка доступа</h1>`;
+    screenSelection.innerHTML = `<h1 style="color:red; text-align:center; margin-top:20px;">Ошибка доступа к базе</h1>`;
     return;
   }
 
@@ -151,13 +162,11 @@ async function renderSelection() {
     });
     html += `</div>`;
   }
-
   screenSelection.innerHTML = html;
 }
 
 function renderQuizShell() {
   showScreen('screen-quiz');
-
   screenQuiz.innerHTML = `
     <div class="screen-top">
       <div class="left">
@@ -178,7 +187,6 @@ function renderQuizShell() {
 
 function renderResult() {
   showScreen('screen-result');
-
   const total = state.questions.length;
   const wrong = total - state.score;
   const percent = total ? Math.round((state.score / total) * 100) : 0;
@@ -281,19 +289,16 @@ function renderAdminPanel(users = [], results = [], accesses = []) {
         <button class="btn-bad" onclick="logout()">🚪 Выйти</button>
       </div>
     </div>
-
     <div class="admin-tabs">
       <button id="btn-subjects" class="tab-btn" onclick="switchAdminTab('subjects')">Предметы</button>
       <button id="btn-students" class="tab-btn" onclick="switchAdminTab('students')">Студенты</button>
       <button id="btn-exams" class="tab-btn" onclick="switchAdminTab('exams')">Экзамены</button>
       <button id="btn-results" class="tab-btn" onclick="switchAdminTab('results')">Результаты</button>
     </div>
-
     <div id="tab-subjects" class="tab-content admin-section">
       <h2>Список тестовых предметов</h2>
       <div class="table-wrap"><table><tr><th>Название</th><th>Системный ключ</th></tr>${subjectRows}</table></div>
     </div>
-
     <div id="tab-students" class="tab-content admin-section">
       <div class="card" style="box-shadow:none; margin-top:0; padding:0; margin-bottom: 20px;">
         <h2>Создать пользователя</h2>
@@ -308,7 +313,6 @@ function renderAdminPanel(users = [], results = [], accesses = []) {
       <h2>Список пользователей</h2>
       <div class="table-wrap"><table><tr><th>ID</th><th>Логин</th><th>Пароль</th><th>Роль</th><th>Удалить</th></tr>${userRows}</table></div>
     </div>
-
     <div id="tab-exams" class="tab-content admin-section">
       <div class="card" style="box-shadow:none; margin-top:0; padding:0; margin-bottom: 20px;">
         <h2>Открыть доступ</h2>
@@ -325,7 +329,6 @@ function renderAdminPanel(users = [], results = [], accesses = []) {
       </select>
       <div class="table-wrap"><table><tr><th>Студент</th><th>Предмет</th><th>Начало</th><th>Конец</th><th>Удалить</th></tr>${accessRows}</table></div>
     </div>
-
     <div id="tab-results" class="tab-content admin-section">
       <h2>Результаты тестов</h2>
       <select id="filter-result" onchange="filterTableRows('result-row', this.value)" style="margin-bottom: 15px;">
@@ -334,7 +337,6 @@ function renderAdminPanel(users = [], results = [], accesses = []) {
       <div class="table-wrap"><table><tr><th>ID</th><th>Пользователь</th><th>Тест</th><th>Баллы</th><th>%</th><th>Удалить</th></tr>${resultRows}</table></div>
     </div>
   `;
-
   loadStudentsList();
   switchAdminTab(currentAdminTab);
 }
@@ -342,23 +344,19 @@ function renderAdminPanel(users = [], results = [], accesses = []) {
 async function handleLogin() {
   const username = document.getElementById('username').value.trim();
   const password = document.getElementById('password').value.trim();
-
   if (!username || !password) { alert('Введите логин и пароль'); return; }
 
-  const { data, error } = await supabaseClient
-    .from('users').select('*').eq('username', username).eq('password', password).single();
-
+  const { data, error } = await supabaseClient.from('users').select('*').eq('username', username).eq('password', password).single();
   if (error || !data) { alert('Неверный логин или пароль'); return; }
 
   state.currentUser = data;
   setSavedUser(data);
-
   if (data.role === 'admin') await openAdminPanel();
   else await renderSelection();
 }
 
 async function startTest(testKey) {
-  document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px; text-align:center;">Загрузка вопросов...</h2>';
+  document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px; text-align:center;">⏳ Загрузка вопросов...</h2>';
   const { data, error } = await supabaseClient.from('questions').select('*').eq('test_key', testKey);
 
   if (error || !data || data.length === 0) {
@@ -366,21 +364,18 @@ async function startTest(testKey) {
     renderSelection();
     return;
   }
-
   state.currentTestKey = testKey;
   state.questions = shuffleArray(data.map(cloneQuestion));
   state.currentIndex = 0;
   state.score = 0;
   state.wrongQuestions = [];
   state.isRepeatMode = false;
-
   renderQuizShell();
   loadQuestion();
 }
 
 function loadQuestion() {
   if (!state.questions.length) { finishQuiz(); return; }
-
   const q = state.questions[state.currentIndex];
   const total = state.questions.length;
 
@@ -391,7 +386,6 @@ function loadQuestion() {
 
   const options = document.getElementById('options');
   options.innerHTML = '';
-
   const shuffledOptions = shuffleArray(q.a.map((text, idx) => ({ text, correct: idx === q.c })));
 
   shuffledOptions.forEach(item => {
@@ -403,21 +397,18 @@ function loadQuestion() {
     btn.addEventListener('click', () => selectAnswer(btn, item.correct));
     options.appendChild(btn);
   });
-
   document.getElementById('next-btn').classList.add('hidden');
 }
 
 function selectAnswer(selectedBtn, isCorrect) {
   const buttons = document.querySelectorAll('#options .option');
   buttons.forEach(btn => btn.disabled = true);
-
   buttons.forEach(btn => { if (btn.dataset.correct === '1') btn.classList.add('correct'); });
 
   if (!isCorrect) {
     selectedBtn.classList.add('wrong');
     if (!state.isRepeatMode) state.wrongQuestions.push(cloneQuestion(state.questions[state.currentIndex]));
   } else state.score++;
-
   document.getElementById('next-btn').classList.remove('hidden');
 }
 
@@ -430,7 +421,6 @@ function nextQuestion() {
 async function saveResult() {
   const total = state.questions.length || 1;
   const percentage = Number(((state.score / total) * 100).toFixed(2));
-
   const { error } = await supabaseClient.from('results').insert([{
     username: state.currentUser.username,
     test_name: getTestTitle(state.currentTestKey),
@@ -438,7 +428,6 @@ async function saveResult() {
     total: state.questions.length,
     percentage: percentage
   }]);
-
   if (error) console.error('Ошибка сохранения результата:', error);
 }
 
@@ -466,7 +455,6 @@ function backToSelection() {
 
 function logout() {
   if (!confirm('Вы уверены, что хотите выйти из системы?')) return;
-  
   clearSavedUser();
   state.currentUser = null;
   state.currentTestKey = null;
@@ -481,9 +469,7 @@ function logout() {
 async function loadStudentsList() {
   const container = document.getElementById('students-list');
   if (!container) return;
-
   const { data, error } = await supabaseClient.from('users').select('*').neq('role', 'admin').order('id', { ascending: true });
-
   if (error) { container.innerHTML = 'Ошибка загрузки'; return; }
   const students = data || [];
   if (!students.length) { container.innerHTML = '<div class="muted" style="margin:0;">Нет студентов</div>'; return; }
@@ -521,7 +507,6 @@ async function createUser() {
   const role = document.getElementById('new-role').value;
 
   if (!username || !password) { alert('Заполните логин и пароль'); return; }
-
   const { error } = await supabaseClient.from('users').insert([{ username, password, role }]);
   if (error) { alert('Ошибка создания пользователя'); return; }
   
@@ -550,7 +535,6 @@ async function deleteResult(id) {
 async function openAdminPanel() {
   showScreen('screen-admin');
   const now = new Date().toISOString();
-  
   await supabaseClient.from('test_access').delete().lt('end_time', now);
 
   const [usersRes, resultsRes, accessRes] = await Promise.all([
@@ -569,18 +553,31 @@ function filterTableRows(rowClassName, selectedKey) {
 }
 
 function init() {
+  // Проверка на загрузку Supabase (если скрипт заблокирован в index.html)
+  if (typeof supabase === 'undefined') {
+      const loginScreen = document.getElementById('screen-login');
+      if(loginScreen) {
+          loginScreen.classList.remove('hidden');
+          loginScreen.innerHTML = '<h2 style="color:#dc3545; padding:30px; text-align:center;">❌ Ошибка: База данных не загрузилась. Пожалуйста, отключите AdBlock / VPN или обновите страницу.</h2>';
+      }
+      return;
+  }
+
   const savedUser = localStorage.getItem('user');
   if (savedUser) {
     try {
       const parsed = JSON.parse(savedUser);
       state.currentUser = parsed;
-      if (parsed.role === 'admin') openAdminPanel();
-      else renderSelection();
+      if (parsed.role === 'admin') {
+          openAdminPanel();
+      } else {
+          renderSelection();
+      }
       return;
     } catch (e) { localStorage.removeItem('user'); }
   }
   renderLogin();
 }
 
+// Запускаем
 init();
-</script>
