@@ -82,13 +82,11 @@ function clearSavedUser() {
   localStorage.removeItem('user');
 }
 
-// СОХРАНЕНИЕ ПРОГРЕССА В ПАМЯТЬ БРАУЗЕРА
 function saveTestProgress(isAnswered = false) {
   if (!state.currentTestKey) return;
   const progress = {
     currentTestKey: state.currentTestKey,
     questions: state.questions,
-    // Если студент ответил и хитро обновил страницу - продвигаем его вперед
     currentIndex: isAnswered ? state.currentIndex + 1 : state.currentIndex,
     score: state.score,
     wrongQuestions: state.wrongQuestions,
@@ -254,6 +252,7 @@ async function renderSelection() {
         <div class="subtitle-left">Пользователь: ${escapeHtml(state.currentUser.username)}</div>
       </div>
       <div class="right">
+        <button class="btn-gray" onclick="renderSelection()">🔄 Обновить</button>
         <button class="btn-gray" onclick="changeMyPassword()">🔑 Пароль</button>
         <button class="btn-bad" onclick="logout()">🚪 Выйти</button>
       </div>
@@ -568,6 +567,7 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
         <div class="subtitle-left">Статус: ${isSuperadmin ? 'Главный Администратор' : 'Администратор'} | ${escapeHtml(state.currentUser.username)}</div>
       </div>
       <div class="right">
+        <button class="btn-gray" onclick="openAdminPanel()">🔄 Обновить</button>
         <button class="btn-gray" onclick="changeMyPassword()">🔑 Пароль</button>
         <button class="btn-bad" onclick="logout()">🚪 Выйти</button>
       </div>
@@ -655,7 +655,7 @@ async function startTest(testKey) {
   state.wrongQuestions = [];
   state.isRepeatMode = false;
   
-  saveTestProgress(false); // Сохраняем начальное состояние
+  saveTestProgress(false); 
   
   renderQuizShell();
   loadQuestion();
@@ -663,7 +663,7 @@ async function startTest(testKey) {
 
 function loadQuestion() {
   if (!state.questions.length) { finishQuiz(); return; }
-  saveTestProgress(false); // Синхронизируем прогресс
+  saveTestProgress(false); 
 
   const q = state.questions[state.currentIndex];
   const total = state.questions.length;
@@ -699,7 +699,7 @@ function selectAnswer(selectedBtn, isCorrect) {
     if (!state.isRepeatMode) state.wrongQuestions.push(cloneQuestion(state.questions[state.currentIndex]));
   } else state.score++;
 
-  saveTestProgress(true); // Сохраняем прогресс со смещением вперед (защита от обновления страницы)
+  saveTestProgress(true); 
 
   document.getElementById('next-btn').classList.remove('hidden');
 }
@@ -717,7 +717,7 @@ async function saveResult() {
 }
 
 async function finishQuiz() {
-  clearTestProgress(); // Очищаем память браузера перед сохранением результата
+  clearTestProgress(); 
   if (!state.isRepeatMode) await saveResult();
   renderResult();
 }
@@ -868,7 +868,6 @@ function init() {
       if (parsed.role === 'admin' || parsed.role === 'superadmin') {
           openAdminPanel();
       } else {
-          // ПРОВЕРКА СОХРАНЕННОГО ПРОГРЕССА ТЕСТА
           const savedProgressStr = localStorage.getItem('test_progress');
           if (savedProgressStr) {
               try {
@@ -880,7 +879,6 @@ function init() {
                   state.wrongQuestions = prog.wrongQuestions;
                   state.isRepeatMode = prog.isRepeatMode;
 
-                  // Если студент обновил страницу на самом последнем вопросе
                   if (state.currentIndex >= state.questions.length) {
                       finishQuiz();
                   } else {
