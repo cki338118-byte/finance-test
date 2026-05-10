@@ -36,15 +36,19 @@ const state = {
   score: 0,
   wrongQuestions: [],
   isRepeatMode: false,
+  
+  // Данные для админки
   adminQuestions: [],
+  adminUsers: [],
+  adminGroups: [],
   activeSubjectKey: null,
-  editingQuestionId: null
+  editingQuestionId: null,
+  activeGroupManager: null // Для управления составом группы
 };
 
 const SESSION_LIMIT_MS = 5 * 60 * 60 * 1000;
 let sessionCheckInterval = null;
 let isLoggingIn = false;
-let allStudentsCache = [];
 
 function escapeHtml(value) {
   return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
@@ -206,7 +210,8 @@ async function handleLogin() {
   const sessionToken = Math.random().toString(36).substring(2, 15);
   await supabaseClient.from('users').update({ session_token: sessionToken }).eq('id', data.id);
 
-  await supabaseClient.from('login_history').insert([{ username: data.username, ip_address: userIP }]);
+  const deviceInfo = getDeviceInfo();
+  await supabaseClient.from('login_history').insert([{ username: data.username, ip_address: deviceInfo }]);
 
   const sessionData = { ...data, session_token: sessionToken, loginTimestamp: Date.now() };
   state.currentUser = sessionData;
@@ -334,6 +339,76 @@ function switchAdminTab(tabId) {
     content.classList.add('active');
   }
 }
+
+// ----------------------------------------------------
+// УПРАВЛЕНИЕ ГРУППАми И ПОЛЬЗОВАТЕЛЯМИ
+// ----------------------------------------------------
+
+async function createGroup() {
+    const groupName = document.getElementById('new-group-input').value.trim();
+    if (!groupName) return alert('Введите название группы');
+    const { error } = await supabaseClient.from('groups').insert([{ name: groupName }]);
+    if (error) alert('Ошибка создания (возможно группа уже существует)');
+    else openAdminPanel();
+}
+
+async function deleteGroup(id, name) {
+    if (!confirm(`Удалить группу "${name}"? Все студенты в ней будут переведены в статус "Без группы".`)) return;
+    await supabaseClient.from('users').update({ group_name: 'Без группы' }).eq('group_name', name);
+    await supabaseClient.from('groups').delete().eq('id', id);
+    openAdminPanel();
+}
+
+function openGroupManager(groupName) {
+    state.activeGroupManager = groupName;
+    document.getElementById('students-main-view').classList.add('hidden');
+    document.getElementById('group-editor-view').classList.remove('hidden');
+    
+    document.getElementById('group-editor-title').innerText = `Состав группы: ${escapeHtml(groupName)}`;
+    
+    // Фильтруем студентов этой группы
+    const groupUsers = state.adminUsers.filter(u => u.group_name === groupName && u.role === 'student');
+    const groupUsersHtml = groupUsers.length ? groupUsers.map(u => `
+        <tr>
+            <td>${escapeHtml(u.username)}</td>
+            <td><button class="btn-bad" style="padding:6px 12px; width:auto; font-size:12px;" onclick="removeUserFromGroup(${u.id})">Исключить</button></td>
+        </tr>
+    `).join('') : `<tr><td colspan="2" class="muted">В группе пока нет студентов</td></tr>`;
+    
+    document.getElementById('group-members-list').innerHTML = `<table><tr><th>Студент</th><th>Действие</th></tr>${groupUsersHtml}</table>`;
+
+    // Формируем список тех, кого можно добавить (кто не в этой группе)
+    const availableUsers = state.adminUsers.filter(u => u.group_name !== groupName && u.role === 'student');
+    const optionsHtml = availableUsers.length ? availableUsers.map(u => `<option value="${u.id}">${escapeHtml(u.username)} (сейчас: ${escapeHtml(u.group_name || 'Без группы')})</option>`).join('') : `<option value="">Нет доступных студентов</option>`;
+    
+    document.getElementById('add-to-group-select').innerHTML = optionsHtml;
+}
+
+function closeGroupManager() {
+    state.activeGroupManager = null;
+    document.getElementById('group-editor-view').classList.add('hidden');
+    document.getElementById('students-main-view').classList.remove('hidden');
+}
+
+async function addUserToGroup() {
+    const select = document.getElementById('add-to-group-select');
+    const userId = select.value;
+    if (!userId) return alert('Выберите студента');
+    
+    await supabaseClient.from('users').update({ group_name: state.activeGroupManager }).eq('id', userId);
+    await openAdminPanel(); // Перезагружаем данные
+}
+
+async function removeUserFromGroup(userId) {
+    if (!confirm('Исключить студента из группы?')) return;
+    await supabaseClient.from('users').update({ group_name: 'Без группы' }).eq('id', userId);
+    await openAdminPanel();
+}
+
+
+// ----------------------------------------------------
+// УПРАВЛЕНИЕ ВОПРОСАМИ
+// ----------------------------------------------------
 
 async function openSubjectManager(testKey) {
   state.activeSubjectKey = testKey;
@@ -510,10 +585,15 @@ window.unbanIP = async function(id) {
   openAdminPanel();
 };
 
-function renderAdminPanel(users = [], results = [], accesses = [], history = [], bannedIps = []) {
+
+function renderAdminPanel(users = [], results = [], accesses = [], history = [], bannedIps = [], groups = []) {
+  state.adminUsers = users;
+  state.adminGroups = groups;
+  
   showScreen('screen-admin');
   const isSuperadmin = state.currentUser.role === 'superadmin';
 
+  // --- ВКЛАДКА ПРЕДМЕТЫ ---
   const subjectsGrid = Object.keys(TEST_TITLES).map(key => `
     <div class="card" style="box-shadow:none; border:1px solid #d7dce3; margin-top:10px; display:flex; justify-content:space-between; align-items:center; padding:15px;">
       <div>
@@ -524,11 +604,21 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
     </div>
   `).join('');
 
+  // --- ВКЛАДКА ПОЛЬЗОВАТЕЛИ (Группы + Пользователи) ---
+  const groupsRows = groups.length ? groups.map(g => `
+      <tr>
+        <td>${escapeHtml(g.name)}</td>
+        <td>
+            <button class="btn-ok" style="padding:6px 12px; width:auto; font-size:12px; margin-right:5px;" onclick="openGroupManager('${escapeHtml(g.name)}')">👥 Состав группы</button>
+            <button class="btn-bad" style="padding:6px 12px; width:auto; font-size:12px;" onclick="deleteGroup(${g.id}, '${escapeHtml(g.name)}')">❌ Удалить</button>
+        </td>
+      </tr>
+  `).join('') : `<tr><td colspan="2">Групп пока нет</td></tr>`;
+
   const userRows = users.length ? users.map(user => {
     let canDelete = false;
     if (isSuperadmin && user.username !== state.currentUser.username) canDelete = true;
     else if (!isSuperadmin && user.role === 'student') canDelete = true;
-
     return `
       <tr>
         <td>${escapeHtml(user.id)}</td>
@@ -543,10 +633,12 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
 
   let roleOptions = `<option value="student">student (Студент)</option>`;
   if (isSuperadmin) {
-    roleOptions += `<option value="admin">admin (Обычный Админ)</option>
-                    <option value="superadmin">superadmin (Главный Админ)</option>`;
+    roleOptions += `<option value="admin">admin (Обычный Админ)</option><option value="superadmin">superadmin (Главный Админ)</option>`;
   }
+  
+  const groupSelectOptions = `<option value="Без группы">Без группы</option>` + groups.map(g => `<option value="${escapeHtml(g.name)}">${escapeHtml(g.name)}</option>`).join('');
 
+  // --- ВКЛАДКА ЭКЗАМЕНЫ (ДОСТУПЫ) ---
   const accessRows = accesses.length ? accesses.map(row => `
       <tr class="access-row" data-filter-key="${row.test_key}">
         <td>${escapeHtml(row.username)}</td>
@@ -572,25 +664,11 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
 
   const historyRows = history.length ? history.map(row => {
     let banBtn = '';
-    if (isSuperadmin && row.ip_address !== 'Скрыт/VPN') {
-      banBtn = `<button class="btn-bad" style="padding:4px 8px; font-size:12px; margin-left:10px; width:auto;" onclick="banIP('${escapeHtml(row.ip_address)}')">⛔ Бан</button>`;
-    }
-    return `
-      <tr class="history-row" data-filter-key="${escapeHtml(row.username)}">
-        <td>${escapeHtml(row.username)}</td>
-        <td>${escapeHtml(row.ip_address)} ${banBtn}</td>
-        <td>${new Date(row.login_time).toLocaleString()}</td>
-      </tr>
-    `;
+    if (isSuperadmin && row.ip_address !== 'Скрыт/VPN') banBtn = `<button class="btn-bad" style="padding:4px 8px; font-size:12px; margin-left:10px; width:auto;" onclick="banIP('${escapeHtml(row.ip_address)}')">⛔ Бан</button>`;
+    return `<tr class="history-row" data-filter-key="${escapeHtml(row.username)}"><td>${escapeHtml(row.username)}</td><td>${escapeHtml(row.ip_address)} ${banBtn}</td><td>${new Date(row.login_time).toLocaleString()}</td></tr>`;
   }).join('') : `<tr><td colspan="3">Истории входов пока нет</td></tr>`;
 
-  const bannedRows = bannedIps.length ? bannedIps.map(row => `
-      <tr>
-        <td style="color:red; font-weight:bold;">${escapeHtml(row.ip_address)}</td>
-        <td>${new Date(row.banned_at).toLocaleString()}</td>
-        <td><button class="btn-ok" style="padding:8px 15px; width:auto;" onclick="unbanIP(${row.id})">Разблокировать</button></td>
-      </tr>
-  `).join('') : `<tr><td colspan="3">Черный список пуст</td></tr>`;
+  const bannedRows = bannedIps.length ? bannedIps.map(row => `<tr><td style="color:red; font-weight:bold;">${escapeHtml(row.ip_address)}</td><td>${new Date(row.banned_at).toLocaleString()}</td><td><button class="btn-ok" style="padding:8px 15px; width:auto;" onclick="unbanIP(${row.id})">Разблокировать</button></td></tr>`).join('') : `<tr><td colspan="3">Черный список пуст</td></tr>`;
 
   const uniqueUsers = [...new Set(users.map(u => u.username))];
   const historyUserOptions = uniqueUsers.map(u => `<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`).join('');
@@ -611,7 +689,7 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
     <div class="admin-tabs">
       <button id="btn-subjects" class="tab-btn" onclick="switchAdminTab('subjects')">Предметы</button>
       <button id="btn-students" class="tab-btn" onclick="switchAdminTab('students')">Пользователи</button>
-      <button id="btn-exams" class="tab-btn" onclick="switchAdminTab('exams')">Доступы</button>
+      <button id="btn-exams" class="tab-btn" onclick="switchAdminTab('exams')">Экзамены (Доступ)</button>
       <button id="btn-results" class="tab-btn" onclick="switchAdminTab('results')">Результаты</button>
       <button id="btn-history" class="tab-btn" onclick="switchAdminTab('history')">История</button>
       ${isSuperadmin ? `<button id="btn-blacklist" class="tab-btn" style="color: red;" onclick="switchAdminTab('blacklist')">Бан-лист</button>` : ''}
@@ -622,7 +700,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
         <h2>Список предметов</h2>
         <div style="margin-top:15px;">${subjectsGrid}</div>
       </div>
-      
       <div id="subject-editor-container" class="hidden">
         <button class="btn-gray" style="margin-bottom:15px; width:auto; padding: 10px 20px;" onclick="closeSubjectManager()">🔙 Назад к списку</button>
         <h2 id="subject-editor-title" style="text-align:left;">Управление вопросами</h2>
@@ -632,44 +709,73 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
     </div>
     
     <div id="tab-students" class="tab-content admin-section">
-      <div class="card" style="box-shadow:none; margin-top:0; padding:0; margin-bottom: 20px;">
-        <h2>Создать пользователя</h2>
-        <input id="new-username" placeholder="Логин" autocomplete="off" />
-        <input id="new-password" placeholder="Пароль" autocomplete="off" />
-        <select id="new-role" onchange="document.getElementById('group-container').style.display = this.value === 'student' ? 'block' : 'none'">${roleOptions}</select>
-        
-        <div id="group-container" style="margin-top: 10px;">
-            <select id="new-group">
-                <option value="Группа 1">Группа 1</option>
-                <option value="Группа 2">Группа 2</option>
-                <option value="Без группы">Без группы</option>
-            </select>
-        </div>
-
-        <button class="btn-ok" style="margin-top: 15px;" onclick="createUser()">Создать</button>
+      <div id="students-main-view">
+          <h2>Управление группами</h2>
+          <div style="display:flex; gap:10px; margin-bottom: 15px;">
+              <input id="new-group-input" placeholder="Название новой группы" style="margin:0;" />
+              <button class="btn-ok" style="margin:0; width:auto; padding: 0 20px;" onclick="createGroup()">Добавить</button>
+          </div>
+          <div class="table-wrap"><table><tr><th>Группа</th><th>Действия</th></tr>${groupsRows}</table></div>
+          
+          <hr style="margin: 30px 0; border: none; border-top: 1px solid #ddd;">
+          
+          <div class="card" style="box-shadow:none; margin-top:0; padding:0; margin-bottom: 20px;">
+            <h2>Создать пользователя</h2>
+            <input id="new-username" placeholder="Логин" autocomplete="off" />
+            <input id="new-password" placeholder="Пароль" autocomplete="off" />
+            <select id="new-role" onchange="document.getElementById('group-container').style.display = this.value === 'student' ? 'block' : 'none'">${roleOptions}</select>
+            <div id="group-container" style="margin-top: 10px;">
+                <select id="new-group">${groupSelectOptions}</select>
+            </div>
+            <button class="btn-ok" style="margin-top: 15px;" onclick="createUser()">Создать</button>
+          </div>
+          
+          <h2>Список всех пользователей</h2>
+          <div class="table-wrap"><table><tr><th>ID</th><th>Логин</th><th>Пароль</th><th>Роль</th><th>Группа</th><th>Удалить</th></tr>${userRows}</table></div>
       </div>
-      <h2>Список пользователей</h2>
-      <div class="table-wrap"><table><tr><th>ID</th><th>Логин</th><th>Пароль</th><th>Роль</th><th>Группа</th><th>Удалить</th></tr>${userRows}</table></div>
+
+      <div id="group-editor-view" class="hidden">
+          <button class="btn-gray" style="margin-bottom:15px; width:auto; padding: 10px 20px;" onclick="closeGroupManager()">🔙 Назад</button>
+          <h2 id="group-editor-title">Состав группы</h2>
+          
+          <div id="group-members-list" class="table-wrap" style="margin-bottom:20px;"></div>
+          
+          <div class="card" style="box-shadow:none; border:1px solid #d7dce3;">
+              <h3 style="margin-top:0;">Добавить студента в группу</h3>
+              <div style="display:flex; gap:10px;">
+                  <select id="add-to-group-select" style="margin:0;"></select>
+                  <button class="btn-ok" style="margin:0; width:auto; padding:0 20px;" onclick="addUserToGroup()">Добавить</button>
+              </div>
+          </div>
+      </div>
     </div>
     
     <div id="tab-exams" class="tab-content admin-section">
       <div class="card" style="box-shadow:none; margin-top:0; padding:0; margin-bottom: 20px;">
-        <h2>Открыть доступ</h2>
-        <select id="access-test">${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}</select>
+        <h2>Открыть доступ к экзамену</h2>
+        <select id="access-test" style="margin-bottom:20px;">${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}</select>
         
-        <label style="display:block;margin-top:15px; font-weight:bold;">Выберите студентов (Фильтр по группе):</label>
-        <select id="access-group-filter" onchange="renderStudentsCheckboxes(this.value)" style="margin-bottom: 10px;">
-            <option value="all">Все студенты</option>
-            <option value="Группа 1">Только Группа 1</option>
-            <option value="Группа 2">Только Группа 2</option>
-            <option value="Без группы">Без группы</option>
-        </select>
+        <div style="display:flex; gap:20px; margin-bottom:15px; background: #f9fafb; padding:10px; border-radius:8px;">
+            <label style="cursor:pointer;"><input type="radio" name="access_type" value="group" checked onchange="toggleAccessMode()"> <b>Группе целиком</b></label>
+            <label style="cursor:pointer;"><input type="radio" name="access_type" value="individual" onchange="toggleAccessMode()"> <b>Выбрать индивидуально</b></label>
+        </div>
 
-        <div id="students-list" class="students-list">Загрузка студентов...</div>
+        <div id="access-mode-group">
+            <select id="access-group-select">${groupSelectOptions}</select>
+            <div class="muted">Доступ получат все студенты, состоящие в выбранной группе на данный момент.</div>
+        </div>
+
+        <div id="access-mode-individual" class="hidden">
+            <div id="students-list" class="students-list" style="max-height: 200px; overflow-y: auto; border: 1px solid #d7dce3; padding: 10px; border-radius: 8px;">Загрузка студентов...</div>
+            <div style="margin-top:10px;">
+              <button class="btn-gray" style="padding:5px 10px; font-size:12px; width:auto;" onclick="selectAllCheckboxes()">✅ Выбрать всех</button> 
+              <button class="btn-gray" style="padding:5px 10px; font-size:12px; width:auto;" onclick="deselectAllCheckboxes()">❌ Снять выделение</button>
+            </div>
+        </div>
         
-        <label style="display:block;margin-top:15px;">Начало доступа</label><input id="access-start" type="datetime-local">
+        <label style="display:block;margin-top:20px;">Начало доступа</label><input id="access-start" type="datetime-local">
         <label style="display:block;margin-top:15px;">Конец доступа</label><input id="access-end" type="datetime-local">
-        <button class="btn-ok" onclick="grantAccess()">Открыть доступ</button>
+        <button class="btn-ok" style="margin-top:15px;" onclick="grantAccess()">Открыть доступ</button>
       </div>
       <h2>Активные доступы</h2>
       <select id="filter-access" onchange="filterTableRows('access-row', this.value)" style="margin-bottom: 15px;">
@@ -703,48 +809,41 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
     ` : ''}
   `;
   
-  // Вызываем функцию БЕЗ await, так как renderAdminPanel синхронная!
-  loadStudentsList();
+  renderStudentsCheckboxes();
+
   switchAdminTab(currentAdminTab);
-}
-
-async function loadStudentsList() {
-  const container = document.getElementById('students-list');
-  if (!container) return;
-  const { data, error } = await supabaseClient.from('users').select('*').eq('role', 'student').order('id', { ascending: true });
-  if (error) { container.innerHTML = 'Ошибка загрузки'; return; }
   
-  allStudentsCache = data || [];
-  renderStudentsCheckboxes('all'); 
+  // Возвращаем открытый редактор группы, если он был открыт до обновления страницы
+  if (state.activeGroupManager) {
+      openGroupManager(state.activeGroupManager);
+  }
 }
 
-window.renderStudentsCheckboxes = function(groupFilter) {
+window.toggleAccessMode = function() {
+    const mode = document.querySelector('input[name="access_type"]:checked').value;
+    if (mode === 'group') {
+        document.getElementById('access-mode-group').classList.remove('hidden');
+        document.getElementById('access-mode-individual').classList.add('hidden');
+    } else {
+        document.getElementById('access-mode-group').classList.add('hidden');
+        document.getElementById('access-mode-individual').classList.remove('hidden');
+    }
+}
+
+window.renderStudentsCheckboxes = function() {
   const container = document.getElementById('students-list');
   if (!container) return;
 
-  let filtered = allStudentsCache;
-  if (groupFilter !== 'all') {
-      filtered = allStudentsCache.filter(user => user.group_name === groupFilter);
-  }
-
-  let html = `
-    <div style="margin-bottom:10px;">
-      <button class="btn-gray" style="padding:5px 10px; font-size:12px; width:auto;" onclick="selectAllCheckboxes()">✅ Выбрать всех в списке</button> 
-      <button class="btn-gray" style="padding:5px 10px; font-size:12px; width:auto;" onclick="deselectAllCheckboxes()">❌ Снять выделение</button>
-    </div>
-    <div style="max-height: 200px; overflow-y: auto; border: 1px solid #d7dce3; padding: 10px; border-radius: 8px;">
-  `;
-
-  if (!filtered.length) { 
-      html += '<div class="muted" style="margin:0;">Студентов в этой группе не найдено.</div>'; 
+  const students = state.adminUsers.filter(u => u.role === 'student');
+  let html = '';
+  if (!students.length) { 
+      html = '<div class="muted" style="margin:0;">Студентов пока нет.</div>'; 
   } else {
-      filtered.forEach(user => {
+      students.forEach(user => {
         const grp = user.group_name && user.group_name !== 'Без группы' ? ` <span style="color:#888; font-size:12px;">[${escapeHtml(user.group_name)}]</span>` : '';
         html += `<label class="student-item" style="display:block; margin-bottom:5px;"><input type="checkbox" value="${escapeHtml(user.username)}" class="student-checkbox"><span>${escapeHtml(user.username)}${grp}</span></label>`;
       });
   }
-  
-  html += '</div>';
   container.innerHTML = html;
 };
 
@@ -767,9 +866,7 @@ async function startTest(testKey) {
   state.score = 0;
   state.wrongQuestions = [];
   state.isRepeatMode = false;
-  
   saveTestProgress(false); 
-  
   renderQuizShell();
   loadQuestion();
 }
@@ -813,7 +910,6 @@ function selectAnswer(selectedBtn, isCorrect) {
   } else state.score++;
 
   saveTestProgress(true); 
-
   document.getElementById('next-btn').classList.remove('hidden');
 }
 
@@ -871,11 +967,23 @@ function logout(force = false) {
 
 async function grantAccess() {
   const testKey = document.getElementById('access-test').value;
-  const usernames = [...document.querySelectorAll('.student-checkbox:checked')].map(cb => cb.value);
   const startRaw = document.getElementById('access-start').value;
   const endRaw = document.getElementById('access-end').value;
 
-  if (!usernames.length || !startRaw || !endRaw) { alert('Заполните поля и выберите студентов'); return; }
+  if (!startRaw || !endRaw) { alert('Заполните поля даты и времени'); return; }
+
+  const mode = document.querySelector('input[name="access_type"]:checked').value;
+  let usernames = [];
+
+  if (mode === 'group') {
+      const selectedGroup = document.getElementById('access-group-select').value;
+      const usersInGroup = state.adminUsers.filter(u => u.role === 'student' && u.group_name === selectedGroup);
+      usernames = usersInGroup.map(u => u.username);
+      if(usernames.length === 0) return alert('В выбранной группе нет студентов!');
+  } else {
+      usernames = [...document.querySelectorAll('.student-checkbox:checked')].map(cb => cb.value);
+      if(usernames.length === 0) return alert('Выберите хотя бы одного студента');
+  }
 
   const start = new Date(startRaw).toISOString();
   const end = new Date(endRaw).toISOString();
@@ -927,12 +1035,13 @@ async function openAdminPanel() {
   const now = new Date().toISOString();
   await supabaseClient.from('test_access').delete().lt('end_time', now);
 
-  const [usersRes, resultsRes, accessRes, historyRes, bannedRes] = await Promise.all([
+  const [usersRes, resultsRes, accessRes, historyRes, bannedRes, groupsRes] = await Promise.all([
     supabaseClient.from('users').select('*').order('id', { ascending: true }),
     supabaseClient.from('results').select('*').order('id', { ascending: false }),
     supabaseClient.from('test_access').select('*').gte('end_time', now).order('id', { ascending: false }),
     supabaseClient.from('login_history').select('*').order('login_time', { ascending: false }).limit(200),
-    supabaseClient.from('banned_ips').select('*').order('banned_at', { ascending: false })
+    supabaseClient.from('banned_ips').select('*').order('banned_at', { ascending: false }),
+    supabaseClient.from('groups').select('*').order('name', { ascending: true })
   ]);
 
   renderAdminPanel(
@@ -940,7 +1049,8 @@ async function openAdminPanel() {
     resultsRes.data || [], 
     accessRes.data || [], 
     historyRes.data || [],
-    bannedRes.data || []
+    bannedRes.data || [],
+    groupsRes.data || []
   );
 }
 
