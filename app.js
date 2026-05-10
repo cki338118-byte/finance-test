@@ -36,8 +36,6 @@ const state = {
   score: 0,
   wrongQuestions: [],
   isRepeatMode: false,
-  
-  // Для админки
   adminQuestions: [],
   activeSubjectKey: null,
   editingQuestionId: null
@@ -45,6 +43,7 @@ const state = {
 
 const SESSION_LIMIT_MS = 5 * 60 * 60 * 1000;
 let sessionCheckInterval = null;
+let isLoggingIn = false; // Флаг для защиты от спама кнопкой "Войти"
 
 function escapeHtml(value) {
   return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
@@ -132,7 +131,55 @@ function renderLogin() {
     <div class="small-note">Передача пароля другим лицам запрещена. При входе с другого устройства ваш сеанс будет прерван.</div>
   `;
   document.getElementById('login-btn').addEventListener('click', handleLogin);
-  document.getElementById('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
+  document.getElementById('password').addEventListener('keydown', (e) => { 
+      // Защита от зажатого Enter
+      if (e.key === 'Enter' && !isLoggingIn) handleLogin(); 
+  });
+}
+
+async function handleLogin() {
+  if (isLoggingIn) return; // Если уже входим - игнорируем новые клики
+
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value.trim();
+  if (!username || !password) { alert('Введите логин и пароль'); return; }
+
+  // Блокируем кнопку
+  isLoggingIn = true;
+  const loginBtn = document.getElementById('login-btn');
+  const originalBtnText = loginBtn.innerText;
+  loginBtn.innerText = 'Загрузка...';
+  loginBtn.disabled = true;
+  loginBtn.style.opacity = '0.7';
+
+  const { data, error } = await supabaseClient.from('users').select('*').eq('username', username).eq('password', password).single();
+  
+  if (error || !data) { 
+      alert('Неверный логин или пароль'); 
+      isLoggingIn = false;
+      loginBtn.innerText = originalBtnText;
+      loginBtn.disabled = false;
+      loginBtn.style.opacity = '1';
+      return; 
+  }
+
+  const sessionToken = Math.random().toString(36).substring(2, 15);
+  await supabaseClient.from('users').update({ session_token: sessionToken }).eq('id', data.id);
+
+  const deviceInfo = getDeviceInfo();
+  await supabaseClient.from('login_history').insert([{ username: data.username, ip_address: deviceInfo }]);
+
+  const sessionData = { ...data, session_token: sessionToken, loginTimestamp: Date.now() };
+  state.currentUser = sessionData;
+  setSavedUser(sessionData);
+
+  if (sessionCheckInterval) clearInterval(sessionCheckInterval);
+  sessionCheckInterval = setInterval(checkConcurrentLogin, 15000);
+
+  isLoggingIn = false;
+
+  if (data.role === 'admin' || data.role === 'superadmin') await openAdminPanel();
+  else await renderSelection();
 }
 
 async function changeMyPassword() {
@@ -344,7 +391,6 @@ function openQuestionEditor(id) {
     </div>
   `;
 
-  // Рендерим инпуты для ответов
   window._tempAnswers = answers;
   window._tempCorrect = correctIdx;
   renderAnswerFields();
@@ -396,16 +442,13 @@ window.saveQuestion = async function() {
   document.getElementById('question-form-container').innerHTML = '<h3>Сохранение...</h3>';
 
   if (state.editingQuestionId) {
-    // Обновление
     const { error } = await supabaseClient.from('questions').update(payload).eq('id', state.editingQuestionId);
     if (error) { alert('Ошибка сохранения'); console.error(error); }
   } else {
-    // Создание
     const { error } = await supabaseClient.from('questions').insert([payload]);
     if (error) { alert('Ошибка создания'); console.error(error); }
   }
   
-  // Перезагружаем список вопросов
   openSubjectManager(state.activeSubjectKey);
 };
 
@@ -422,7 +465,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
   showScreen('screen-admin');
   const isSuperadmin = state.currentUser.role === 'superadmin';
 
-  // Вкладка ПРЕДМЕТЫ
   const subjectsGrid = Object.keys(TEST_TITLES).map(key => `
     <div class="card" style="box-shadow:none; border:1px solid #d7dce3; margin-top:10px; display:flex; justify-content:space-between; align-items:center; padding:15px;">
       <div>
@@ -433,7 +475,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
     </div>
   `).join('');
 
-  // Логика ролей: обычный админ видит только удаление студентов
   const userRows = users.length ? users.map(user => {
     let canDelete = false;
     if (isSuperadmin && user.username !== state.currentUser.username) canDelete = true;
@@ -450,7 +491,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
     `;
   }).join('') : `<tr><td colspan="5">Пользователей пока нет</td></tr>`;
 
-  // Опции для создания ролей (только superadmin может создавать админов)
   let roleOptions = `<option value="student">student (Студент)</option>`;
   if (isSuperadmin) {
     roleOptions += `<option value="admin">admin (Обычный Админ)</option>
@@ -571,31 +611,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
   `;
   loadStudentsList();
   switchAdminTab(currentAdminTab);
-}
-
-async function handleLogin() {
-  const username = document.getElementById('username').value.trim();
-  const password = document.getElementById('password').value.trim();
-  if (!username || !password) { alert('Введите логин и пароль'); return; }
-
-  const { data, error } = await supabaseClient.from('users').select('*').eq('username', username).eq('password', password).single();
-  if (error || !data) { alert('Неверный логин или пароль'); return; }
-
-  const sessionToken = Math.random().toString(36).substring(2, 15);
-  await supabaseClient.from('users').update({ session_token: sessionToken }).eq('id', data.id);
-
-  const deviceInfo = getDeviceInfo();
-  await supabaseClient.from('login_history').insert([{ username: data.username, ip_address: deviceInfo }]);
-
-  const sessionData = { ...data, session_token: sessionToken, loginTimestamp: Date.now() };
-  state.currentUser = sessionData;
-  setSavedUser(sessionData);
-
-  if (sessionCheckInterval) clearInterval(sessionCheckInterval);
-  sessionCheckInterval = setInterval(checkConcurrentLogin, 15000);
-
-  if (data.role === 'admin' || data.role === 'superadmin') await openAdminPanel();
-  else await renderSelection();
 }
 
 async function startTest(testKey) {
