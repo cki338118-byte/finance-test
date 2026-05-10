@@ -43,7 +43,7 @@ const state = {
 
 const SESSION_LIMIT_MS = 5 * 60 * 60 * 1000;
 let sessionCheckInterval = null;
-let isLoggingIn = false; // Флаг для защиты от спама кнопкой "Войти"
+let isLoggingIn = false;
 
 function escapeHtml(value) {
   return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
@@ -82,6 +82,25 @@ function clearSavedUser() {
   localStorage.removeItem('user');
 }
 
+// СОХРАНЕНИЕ ПРОГРЕССА В ПАМЯТЬ БРАУЗЕРА
+function saveTestProgress(isAnswered = false) {
+  if (!state.currentTestKey) return;
+  const progress = {
+    currentTestKey: state.currentTestKey,
+    questions: state.questions,
+    // Если студент ответил и хитро обновил страницу - продвигаем его вперед
+    currentIndex: isAnswered ? state.currentIndex + 1 : state.currentIndex,
+    score: state.score,
+    wrongQuestions: state.wrongQuestions,
+    isRepeatMode: state.isRepeatMode
+  };
+  localStorage.setItem('test_progress', JSON.stringify(progress));
+}
+
+function clearTestProgress() {
+  localStorage.removeItem('test_progress');
+}
+
 function getTestTitle(key) {
   return TEST_TITLES[key] || 'Тест';
 }
@@ -105,18 +124,37 @@ function getDeviceInfo() {
   return `${device} (${browser})`;
 }
 
-async function checkConcurrentLogin() {
+async function securityCheck() {
   if (!state.currentUser || state.currentUser.role === 'admin' || state.currentUser.role === 'superadmin') return;
 
-  const { data, error } = await supabaseClient
+  const { data: userData } = await supabaseClient
     .from('users')
     .select('session_token')
     .eq('id', state.currentUser.id)
     .single();
 
-  if (data && data.session_token !== state.currentUser.session_token) {
+  if (userData && userData.session_token !== state.currentUser.session_token) {
     alert('⚠️ Ваш аккаунт был использован на другом устройстве. Выполнен автоматический выход.');
     logout(true);
+    return;
+  }
+
+  if (state.currentTestKey && !state.isRepeatMode) {
+    const now = new Date().toISOString();
+    const { data: accessData } = await supabaseClient
+      .from('test_access')
+      .select('id')
+      .eq('username', state.currentUser.username)
+      .eq('test_key', state.currentTestKey)
+      .eq('is_active', true)
+      .lte('start_time', now)
+      .gte('end_time', now);
+
+    if (!accessData || accessData.length === 0) {
+      alert('⛔ Администратор закрыл вам доступ к этому тесту (или вышло время). Тест прерван.');
+      clearTestProgress();
+      backToSelection();
+    }
   }
 }
 
@@ -132,19 +170,17 @@ function renderLogin() {
   `;
   document.getElementById('login-btn').addEventListener('click', handleLogin);
   document.getElementById('password').addEventListener('keydown', (e) => { 
-      // Защита от зажатого Enter
       if (e.key === 'Enter' && !isLoggingIn) handleLogin(); 
   });
 }
 
 async function handleLogin() {
-  if (isLoggingIn) return; // Если уже входим - игнорируем новые клики
+  if (isLoggingIn) return;
 
   const username = document.getElementById('username').value.trim();
   const password = document.getElementById('password').value.trim();
   if (!username || !password) { alert('Введите логин и пароль'); return; }
 
-  // Блокируем кнопку
   isLoggingIn = true;
   const loginBtn = document.getElementById('login-btn');
   const originalBtnText = loginBtn.innerText;
@@ -174,7 +210,7 @@ async function handleLogin() {
   setSavedUser(sessionData);
 
   if (sessionCheckInterval) clearInterval(sessionCheckInterval);
-  sessionCheckInterval = setInterval(checkConcurrentLogin, 15000);
+  sessionCheckInterval = setInterval(securityCheck, 15000);
 
   isLoggingIn = false;
 
@@ -209,7 +245,7 @@ async function renderSelection() {
     .lte('start_time', now)
     .gte('end_time', now);
 
-  if (error) { screenSelection.innerHTML = `<h1 style="color:red; text-align:center; margin-top:20px;">Ошибка доступа</h1>`; return; }
+  if (error) { screenSelection.innerHTML = `<h1 style="color:red; text-align:center; margin-top:20px;">Ошибка доступа к базе</h1>`; return; }
 
   let html = `
     <div class="screen-top">
@@ -294,10 +330,6 @@ function switchAdminTab(tabId) {
     content.classList.add('active');
   }
 }
-
-// ----------------------------------------------------
-// ЛОГИКА РЕДАКТОРА ПРЕДМЕТОВ (Только для Superadmin)
-// ----------------------------------------------------
 
 async function openSubjectManager(testKey) {
   state.activeSubjectKey = testKey;
@@ -458,8 +490,6 @@ window.deleteQuestion = async function(id) {
   if (error) { alert('Ошибка удаления'); console.error(error); }
   else { openSubjectManager(state.activeSubjectKey); }
 };
-
-// ----------------------------------------------------
 
 function renderAdminPanel(users = [], results = [], accesses = [], history = []) {
   showScreen('screen-admin');
@@ -624,12 +654,17 @@ async function startTest(testKey) {
   state.score = 0;
   state.wrongQuestions = [];
   state.isRepeatMode = false;
+  
+  saveTestProgress(false); // Сохраняем начальное состояние
+  
   renderQuizShell();
   loadQuestion();
 }
 
 function loadQuestion() {
   if (!state.questions.length) { finishQuiz(); return; }
+  saveTestProgress(false); // Синхронизируем прогресс
+
   const q = state.questions[state.currentIndex];
   const total = state.questions.length;
 
@@ -663,6 +698,9 @@ function selectAnswer(selectedBtn, isCorrect) {
     selectedBtn.classList.add('wrong');
     if (!state.isRepeatMode) state.wrongQuestions.push(cloneQuestion(state.questions[state.currentIndex]));
   } else state.score++;
+
+  saveTestProgress(true); // Сохраняем прогресс со смещением вперед (защита от обновления страницы)
+
   document.getElementById('next-btn').classList.remove('hidden');
 }
 
@@ -679,6 +717,7 @@ async function saveResult() {
 }
 
 async function finishQuiz() {
+  clearTestProgress(); // Очищаем память браузера перед сохранением результата
   if (!state.isRepeatMode) await saveResult();
   renderResult();
 }
@@ -688,6 +727,7 @@ function repeatWrong() {
   state.questions = shuffleArray(state.wrongQuestions.map(cloneQuestion));
   state.currentIndex = 0;
   state.score = 0;
+  saveTestProgress(false);
   renderQuizShell();
   loadQuestion();
 }
@@ -697,6 +737,7 @@ function backToSelection() {
   state.questions = [];
   state.currentIndex = 0;
   state.score = 0;
+  clearTestProgress();
   renderSelection();
 }
 
@@ -704,6 +745,7 @@ function logout(force = false) {
   if (!force && !confirm('Вы уверены, что хотите выйти из системы?')) return;
   if (sessionCheckInterval) clearInterval(sessionCheckInterval);
   clearSavedUser();
+  clearTestProgress();
   state.currentUser = null;
   state.currentTestKey = null;
   state.questions = [];
@@ -813,6 +855,7 @@ function init() {
       
       if (parsed.loginTimestamp && (Date.now() - parsed.loginTimestamp > SESSION_LIMIT_MS)) {
           localStorage.removeItem('user');
+          clearTestProgress();
           alert('Время сессии (5 часов) истекло. Пожалуйста, войдите заново.');
           renderLogin();
           return;
@@ -820,10 +863,37 @@ function init() {
 
       state.currentUser = parsed;
       if (sessionCheckInterval) clearInterval(sessionCheckInterval);
-      sessionCheckInterval = setInterval(checkConcurrentLogin, 15000);
+      sessionCheckInterval = setInterval(securityCheck, 15000);
 
-      if (parsed.role === 'admin' || parsed.role === 'superadmin') openAdminPanel();
-      else renderSelection();
+      if (parsed.role === 'admin' || parsed.role === 'superadmin') {
+          openAdminPanel();
+      } else {
+          // ПРОВЕРКА СОХРАНЕННОГО ПРОГРЕССА ТЕСТА
+          const savedProgressStr = localStorage.getItem('test_progress');
+          if (savedProgressStr) {
+              try {
+                  const prog = JSON.parse(savedProgressStr);
+                  state.currentTestKey = prog.currentTestKey;
+                  state.questions = prog.questions;
+                  state.currentIndex = prog.currentIndex;
+                  state.score = prog.score;
+                  state.wrongQuestions = prog.wrongQuestions;
+                  state.isRepeatMode = prog.isRepeatMode;
+
+                  // Если студент обновил страницу на самом последнем вопросе
+                  if (state.currentIndex >= state.questions.length) {
+                      finishQuiz();
+                  } else {
+                      renderQuizShell();
+                      loadQuestion();
+                  }
+                  return;
+              } catch (e) {
+                  clearTestProgress();
+              }
+          }
+          renderSelection();
+      }
       return;
     } catch (e) { localStorage.removeItem('user'); }
   }
