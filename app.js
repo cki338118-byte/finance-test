@@ -38,6 +38,9 @@ const state = {
   isRepeatMode: false
 };
 
+// --- Лимит сессии 5 часов (в миллисекундах) ---
+const SESSION_LIMIT_MS = 5 * 60 * 60 * 1000;
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -93,7 +96,7 @@ async function getIPAddress() {
     const data = await response.json();
     return data.ip;
   } catch (e) {
-    return 'Не удалось определить';
+    return 'Скрыт (VPN/AdBlock)';
   }
 }
 
@@ -105,7 +108,7 @@ function renderLogin() {
     <input id="username" placeholder="Логин" autocomplete="username" />
     <input id="password" type="password" placeholder="Пароль" autocomplete="current-password" />
     <button id="login-btn" class="btn-ok">Войти</button>
-    <div class="small-note">Если у вас уже есть аккаунт, вход сохранится после обновления страницы.</div>
+    <div class="small-note">Сессия длится 5 часов, после чего потребуется повторный вход.</div>
   `;
 
   document.getElementById('login-btn').addEventListener('click', handleLogin);
@@ -264,7 +267,7 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
 
   const accessRows = accesses.length
     ? accesses.map(row => `
-        <tr class="access-row" data-test="${row.test_key}">
+        <tr class="access-row" data-filter-key="${row.test_key}">
           <td>${escapeHtml(row.username)}</td>
           <td>${escapeHtml(getTestTitle(row.test_key))}</td>
           <td>${new Date(row.start_time).toLocaleString()}</td>
@@ -278,7 +281,7 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
     ? results.map(row => {
         const testKey = Object.keys(TEST_TITLES).find(k => TEST_TITLES[k] === row.test_name) || 'unknown';
         return `
-        <tr class="result-row" data-test="${testKey}">
+        <tr class="result-row" data-filter-key="${testKey}">
           <td>${escapeHtml(row.id)}</td>
           <td>${escapeHtml(row.username)}</td>
           <td>${escapeHtml(row.test_name)}</td>
@@ -289,16 +292,20 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
       `}).join('')
     : `<tr><td colspan="6">Результатов пока нет</td></tr>`;
 
-  // Генерация таблицы истории входов
+  // Генерация таблицы истории входов с ключом для фильтрации
   const historyRows = history.length
     ? history.map(row => `
-        <tr>
+        <tr class="history-row" data-filter-key="${escapeHtml(row.username)}">
           <td>${escapeHtml(row.username)}</td>
           <td>${escapeHtml(row.ip_address)}</td>
           <td>${new Date(row.login_time).toLocaleString()}</td>
         </tr>
       `).join('')
     : `<tr><td colspan="3">Истории входов пока нет</td></tr>`;
+
+  // Генерируем уникальный список студентов для фильтра истории
+  const uniqueUsers = [...new Set(users.map(u => u.username))];
+  const historyUserOptions = uniqueUsers.map(u => `<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`).join('');
 
   screenAdmin.innerHTML = `
     <div class="screen-top">
@@ -316,7 +323,7 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
       <button id="btn-students" class="tab-btn" onclick="switchAdminTab('students')">Студенты</button>
       <button id="btn-exams" class="tab-btn" onclick="switchAdminTab('exams')">Экзамены</button>
       <button id="btn-results" class="tab-btn" onclick="switchAdminTab('results')">Результаты</button>
-      <button id="btn-history" class="tab-btn" onclick="switchAdminTab('history')">История входов</button>
+      <button id="btn-history" class="tab-btn" onclick="switchAdminTab('history')">История</button>
     </div>
     
     <div id="tab-subjects" class="tab-content admin-section">
@@ -366,6 +373,9 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
 
     <div id="tab-history" class="tab-content admin-section">
       <h2>История авторизаций</h2>
+      <select id="filter-history" onchange="filterTableRows('history-row', this.value)" style="margin-bottom: 15px;">
+        <option value="all">Все пользователи</option>${historyUserOptions}
+      </select>
       <div class="table-wrap"><table><tr><th>Пользователь</th><th>IP-адрес</th><th>Время входа</th></tr>${historyRows}</table></div>
     </div>
   `;
@@ -381,12 +391,15 @@ async function handleLogin() {
   const { data, error } = await supabaseClient.from('users').select('*').eq('username', username).eq('password', password).single();
   if (error || !data) { alert('Неверный логин или пароль'); return; }
 
-  // Успешный логин -> получаем IP и пишем в историю
+  // Сохраняем IP в историю
   const userIP = await getIPAddress();
   await supabaseClient.from('login_history').insert([{ username: data.username, ip_address: userIP }]);
 
-  state.currentUser = data;
-  setSavedUser(data);
+  // Добавляем к данным пользователя метку времени для 5-часового лимита
+  const sessionData = { ...data, loginTimestamp: Date.now() };
+
+  state.currentUser = sessionData;
+  setSavedUser(sessionData);
   if (data.role === 'admin') await openAdminPanel();
   else await renderSelection();
 }
@@ -577,19 +590,22 @@ async function openAdminPanel() {
     supabaseClient.from('users').select('*').order('id', { ascending: true }),
     supabaseClient.from('results').select('*').order('id', { ascending: false }),
     supabaseClient.from('test_access').select('*').gte('end_time', now).order('id', { ascending: false }),
-    supabaseClient.from('login_history').select('*').order('login_time', { ascending: false }).limit(100) // Загружаем последние 100 авторизаций
+    supabaseClient.from('login_history').select('*').order('login_time', { ascending: false }).limit(200) // Загружаем последние 200 авторизаций
   ]);
 
   renderAdminPanel(usersRes.data || [], resultsRes.data || [], accessRes.data || [], historyRes.data || []);
 }
 
+// Универсальная функция фильтрации таблиц
 function filterTableRows(rowClassName, selectedKey) {
   document.querySelectorAll('.' + rowClassName).forEach(row => {
-    row.style.display = (selectedKey === 'all' || row.dataset.test === selectedKey) ? '' : 'none';
+    const rowKey = row.dataset.filterKey; // Теперь ищем универсальный атрибут data-filter-key
+    row.style.display = (selectedKey === 'all' || rowKey === selectedKey) ? '' : 'none';
   });
 }
 
 function init() {
+  // Проверка на загрузку Supabase (если скрипт заблокирован в index.html)
   if (typeof supabase === 'undefined') {
       const loginScreen = document.getElementById('screen-login');
       if(loginScreen) {
@@ -599,10 +615,19 @@ function init() {
       return;
   }
 
-  const savedUser = localStorage.getItem('user');
-  if (savedUser) {
+  const savedUserStr = localStorage.getItem('user');
+  if (savedUserStr) {
     try {
-      const parsed = JSON.parse(savedUser);
+      const parsed = JSON.parse(savedUserStr);
+      
+      // Проверяем, не прошло ли 5 часов с момента логина
+      if (parsed.loginTimestamp && (Date.now() - parsed.loginTimestamp > SESSION_LIMIT_MS)) {
+          localStorage.removeItem('user');
+          alert('Время сессии (5 часов) истекло. Пожалуйста, войдите заново в целях безопасности.');
+          renderLogin();
+          return;
+      }
+
       state.currentUser = parsed;
       if (parsed.role === 'admin') {
           openAdminPanel();
@@ -615,4 +640,5 @@ function init() {
   renderLogin();
 }
 
+// Запускаем
 init();
