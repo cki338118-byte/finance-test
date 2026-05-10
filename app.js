@@ -49,6 +49,7 @@ const state = {
 const SESSION_LIMIT_MS = 5 * 60 * 60 * 1000;
 let sessionCheckInterval = null;
 let isLoggingIn = false;
+let allStudentsCache = [];
 
 function escapeHtml(value) {
   return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
@@ -210,8 +211,8 @@ async function handleLogin() {
   const sessionToken = Math.random().toString(36).substring(2, 15);
   await supabaseClient.from('users').update({ session_token: sessionToken }).eq('id', data.id);
 
-  const deviceInfo = getDeviceInfo();
-  await supabaseClient.from('login_history').insert([{ username: data.username, ip_address: deviceInfo }]);
+  const deviceInfo = navigator.userAgent.substring(0, 50) + "..."; // Сохраняем краткую информацию вместо устройства
+  await supabaseClient.from('login_history').insert([{ username: data.username, ip_address: userIP }]);
 
   const sessionData = { ...data, session_token: sessionToken, loginTimestamp: Date.now() };
   state.currentUser = sessionData;
@@ -341,7 +342,7 @@ function switchAdminTab(tabId) {
 }
 
 // ----------------------------------------------------
-// УПРАВЛЕНИЕ ГРУППАми И ПОЛЬЗОВАТЕЛЯМИ
+// УПРАВЛЕНИЕ ГРУППАМИ И ПОЛЬЗОВАТЕЛЯМИ
 // ----------------------------------------------------
 
 async function createGroup() {
@@ -366,7 +367,6 @@ function openGroupManager(groupName) {
     
     document.getElementById('group-editor-title').innerText = `Состав группы: ${escapeHtml(groupName)}`;
     
-    // Фильтруем студентов этой группы
     const groupUsers = state.adminUsers.filter(u => u.group_name === groupName && u.role === 'student');
     const groupUsersHtml = groupUsers.length ? groupUsers.map(u => `
         <tr>
@@ -377,7 +377,6 @@ function openGroupManager(groupName) {
     
     document.getElementById('group-members-list').innerHTML = `<table><tr><th>Студент</th><th>Действие</th></tr>${groupUsersHtml}</table>`;
 
-    // Формируем список тех, кого можно добавить (кто не в этой группе)
     const availableUsers = state.adminUsers.filter(u => u.group_name !== groupName && u.role === 'student');
     const optionsHtml = availableUsers.length ? availableUsers.map(u => `<option value="${u.id}">${escapeHtml(u.username)} (сейчас: ${escapeHtml(u.group_name || 'Без группы')})</option>`).join('') : `<option value="">Нет доступных студентов</option>`;
     
@@ -396,7 +395,7 @@ async function addUserToGroup() {
     if (!userId) return alert('Выберите студента');
     
     await supabaseClient.from('users').update({ group_name: state.activeGroupManager }).eq('id', userId);
-    await openAdminPanel(); // Перезагружаем данные
+    await openAdminPanel(); 
 }
 
 async function removeUserFromGroup(userId) {
@@ -615,7 +614,12 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
       </tr>
   `).join('') : `<tr><td colspan="2">Групп пока нет</td></tr>`;
 
-  const userRows = users.length ? users.map(user => {
+  // ФИЛЬТРУЕМ ПОЛЬЗОВАТЕЛЕЙ ДЛЯ ОБЫЧНОГО АДМИНА
+  const visibleUsers = isSuperadmin 
+    ? users 
+    : users.filter(u => u.role === 'student' || u.username === state.currentUser.username);
+
+  const userRows = visibleUsers.length ? visibleUsers.map(user => {
     let canDelete = false;
     if (isSuperadmin && user.username !== state.currentUser.username) canDelete = true;
     else if (!isSuperadmin && user.role === 'student') canDelete = true;
@@ -662,7 +666,16 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
       </tr>
     `}).join('') : `<tr><td colspan="6">Результатов пока нет</td></tr>`;
 
-  const historyRows = history.length ? history.map(row => {
+  // ФИЛЬТРУЕМ ИСТОРИЮ ВХОДОВ
+  const visibleHistory = isSuperadmin 
+    ? history 
+    : history.filter(h => {
+        const u = users.find(user => user.username === h.username);
+        if (!u) return true;
+        return u.role === 'student' || h.username === state.currentUser.username;
+    });
+
+  const historyRows = visibleHistory.length ? visibleHistory.map(row => {
     let banBtn = '';
     if (isSuperadmin && row.ip_address !== 'Скрыт/VPN') banBtn = `<button class="btn-bad" style="padding:4px 8px; font-size:12px; margin-left:10px; width:auto;" onclick="banIP('${escapeHtml(row.ip_address)}')">⛔ Бан</button>`;
     return `<tr class="history-row" data-filter-key="${escapeHtml(row.username)}"><td>${escapeHtml(row.username)}</td><td>${escapeHtml(row.ip_address)} ${banBtn}</td><td>${new Date(row.login_time).toLocaleString()}</td></tr>`;
@@ -670,7 +683,7 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
 
   const bannedRows = bannedIps.length ? bannedIps.map(row => `<tr><td style="color:red; font-weight:bold;">${escapeHtml(row.ip_address)}</td><td>${new Date(row.banned_at).toLocaleString()}</td><td><button class="btn-ok" style="padding:8px 15px; width:auto;" onclick="unbanIP(${row.id})">Разблокировать</button></td></tr>`).join('') : `<tr><td colspan="3">Черный список пуст</td></tr>`;
 
-  const uniqueUsers = [...new Set(users.map(u => u.username))];
+  const uniqueUsers = [...new Set(visibleHistory.map(u => u.username))];
   const historyUserOptions = uniqueUsers.map(u => `<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`).join('');
 
   screenAdmin.innerHTML = `
@@ -730,7 +743,7 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
             <button class="btn-ok" style="margin-top: 15px;" onclick="createUser()">Создать</button>
           </div>
           
-          <h2>Список всех пользователей</h2>
+          <h2>Список пользователей</h2>
           <div class="table-wrap"><table><tr><th>ID</th><th>Логин</th><th>Пароль</th><th>Роль</th><th>Группа</th><th>Удалить</th></tr>${userRows}</table></div>
       </div>
 
@@ -813,7 +826,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
 
   switchAdminTab(currentAdminTab);
   
-  // Возвращаем открытый редактор группы, если он был открыт до обновления страницы
   if (state.activeGroupManager) {
       openGroupManager(state.activeGroupManager);
   }
