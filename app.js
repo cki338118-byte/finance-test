@@ -38,16 +38,12 @@ const state = {
   isRepeatMode: false
 };
 
-// --- Лимит сессии 5 часов (в миллисекундах) ---
+// Лимит сессии 5 часов
 const SESSION_LIMIT_MS = 5 * 60 * 60 * 1000;
+let sessionCheckInterval = null;
 
 function escapeHtml(value) {
-  return String(value ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
+  return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }
 
 function cloneQuestion(q) {
@@ -65,9 +61,7 @@ function shuffleArray(array) {
 
 function showScreen(activeId) {
   const screens = [screenLogin, screenSelection, screenQuiz, screenResult, screenAdmin];
-  screens.forEach(s => {
-      if(s) s.classList.add('hidden');
-  });
+  screens.forEach(s => { if(s) s.classList.add('hidden'); });
   const target = document.getElementById(activeId);
   if(target) {
       target.classList.remove('hidden');
@@ -89,14 +83,39 @@ function getTestTitle(key) {
   return TEST_TITLES[key] || 'Тест';
 }
 
-// Функция для получения IP адреса пользователя
-async function getIPAddress() {
-  try {
-    const response = await fetch('https://api.ipify.org?format=json');
-    const data = await response.json();
-    return data.ip;
-  } catch (e) {
-    return 'Скрыт (VPN/AdBlock)';
+function getDeviceInfo() {
+  const ua = navigator.userAgent;
+  let device = "Неизвестное устройство";
+  if (/android/i.test(ua)) device = "Android";
+  else if (/iPad|iPhone|iPod/.test(ua)) device = "iOS";
+  else if (/Windows/.test(ua)) device = "Windows";
+  else if (/Mac/.test(ua)) device = "Mac OS";
+  else if (/Linux/.test(ua)) device = "Linux";
+
+  let browser = "Браузер";
+  if (/Edg/.test(ua)) browser = "Edge";
+  else if (/OPR|Opera/.test(ua)) browser = "Opera";
+  else if (/Chrome/.test(ua)) browser = "Chrome";
+  else if (/Safari/.test(ua)) browser = "Safari";
+  else if (/Firefox/.test(ua)) browser = "Firefox";
+
+  return `${device} (${browser})`;
+}
+
+// ПРОВЕРКА НА ОДНОВРЕМЕННЫЙ ВХОД (ОХРАННИК)
+async function checkConcurrentLogin() {
+  if (!state.currentUser || state.currentUser.role === 'admin') return; // Админа не проверяем так жестко
+
+  const { data, error } = await supabaseClient
+    .from('users')
+    .select('session_token')
+    .eq('id', state.currentUser.id)
+    .single();
+
+  if (data && data.session_token !== state.currentUser.session_token) {
+    // Токен в базе изменился! Значит кто-то другой вошел под этим логином.
+    alert('⚠️ Ваш аккаунт был использован на другом устройстве. Выполнен автоматический выход.');
+    logout(true); // Выкидываем без спроса
   }
 }
 
@@ -108,7 +127,7 @@ function renderLogin() {
     <input id="username" placeholder="Логин" autocomplete="username" />
     <input id="password" type="password" placeholder="Пароль" autocomplete="current-password" />
     <button id="login-btn" class="btn-ok">Войти</button>
-    <div class="small-note">Сессия длится 5 часов, после чего потребуется повторный вход.</div>
+    <div class="small-note">Передача пароля другим лицам запрещена. При входе с другого устройства ваш сеанс будет прерван.</div>
   `;
 
   document.getElementById('login-btn').addEventListener('click', handleLogin);
@@ -121,14 +140,10 @@ async function changeMyPassword() {
   const newPassword = prompt('Введите новый пароль (оставьте пустым для отмены):');
   if (!newPassword || newPassword.trim() === '') return;
 
-  const { error } = await supabaseClient
-    .from('users')
-    .update({ password: newPassword.trim() })
-    .eq('id', state.currentUser.id);
+  const { error } = await supabaseClient.from('users').update({ password: newPassword.trim() }).eq('id', state.currentUser.id);
 
   if (error) {
-    alert('Ошибка при смене пароля. Попробуйте еще раз.');
-    console.error(error);
+    alert('Ошибка при смене пароля.');
   } else {
     alert('Пароль успешно изменен!');
     state.currentUser.password = newPassword.trim();
@@ -249,9 +264,7 @@ function switchAdminTab(tabId) {
 function renderAdminPanel(users = [], results = [], accesses = [], history = []) {
   showScreen('screen-admin');
 
-  const subjectRows = Object.keys(TEST_TITLES).map(key => `
-    <tr><td>${escapeHtml(TEST_TITLES[key])}</td><td><code>${escapeHtml(key)}</code></td></tr>
-  `).join('');
+  const subjectRows = Object.keys(TEST_TITLES).map(key => `<tr><td>${escapeHtml(TEST_TITLES[key])}</td><td><code>${escapeHtml(key)}</code></td></tr>`).join('');
 
   const userRows = users.length
     ? users.map(user => `
@@ -292,7 +305,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
       `}).join('')
     : `<tr><td colspan="6">Результатов пока нет</td></tr>`;
 
-  // Генерация таблицы истории входов с ключом для фильтрации
   const historyRows = history.length
     ? history.map(row => `
         <tr class="history-row" data-filter-key="${escapeHtml(row.username)}">
@@ -303,7 +315,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
       `).join('')
     : `<tr><td colspan="3">Истории входов пока нет</td></tr>`;
 
-  // Генерируем уникальный список студентов для фильтра истории
   const uniqueUsers = [...new Set(users.map(u => u.username))];
   const historyUserOptions = uniqueUsers.map(u => `<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`).join('');
 
@@ -376,7 +387,7 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
       <select id="filter-history" onchange="filterTableRows('history-row', this.value)" style="margin-bottom: 15px;">
         <option value="all">Все пользователи</option>${historyUserOptions}
       </select>
-      <div class="table-wrap"><table><tr><th>Пользователь</th><th>IP-адрес</th><th>Время входа</th></tr>${historyRows}</table></div>
+      <div class="table-wrap"><table><tr><th>Пользователь</th><th>Устройство</th><th>Время входа</th></tr>${historyRows}</table></div>
     </div>
   `;
   loadStudentsList();
@@ -391,15 +402,24 @@ async function handleLogin() {
   const { data, error } = await supabaseClient.from('users').select('*').eq('username', username).eq('password', password).single();
   if (error || !data) { alert('Неверный логин или пароль'); return; }
 
-  // Сохраняем IP в историю
-  const userIP = await getIPAddress();
-  await supabaseClient.from('login_history').insert([{ username: data.username, ip_address: userIP }]);
+  // Создаем УНИКАЛЬНЫЙ токен сессии (ключ защиты от одновременного входа)
+  const sessionToken = Math.random().toString(36).substring(2, 15);
+  
+  // Сохраняем токен в базу
+  await supabaseClient.from('users').update({ session_token: sessionToken }).eq('id', data.id);
 
-  // Добавляем к данным пользователя метку времени для 5-часового лимита
-  const sessionData = { ...data, loginTimestamp: Date.now() };
+  const deviceInfo = getDeviceInfo();
+  await supabaseClient.from('login_history').insert([{ username: data.username, ip_address: deviceInfo }]);
+
+  const sessionData = { ...data, session_token: sessionToken, loginTimestamp: Date.now() };
 
   state.currentUser = sessionData;
   setSavedUser(sessionData);
+
+  // Запускаем охранника, который будет проверять вход каждые 15 секунд
+  if (sessionCheckInterval) clearInterval(sessionCheckInterval);
+  sessionCheckInterval = setInterval(checkConcurrentLogin, 15000);
+
   if (data.role === 'admin') await openAdminPanel();
   else await renderSelection();
 }
@@ -502,8 +522,11 @@ function backToSelection() {
   renderSelection();
 }
 
-function logout() {
-  if (!confirm('Вы уверены, что хотите выйти из системы?')) return;
+function logout(force = false) {
+  if (!force && !confirm('Вы уверены, что хотите выйти из системы?')) return;
+  
+  if (sessionCheckInterval) clearInterval(sessionCheckInterval);
+  
   clearSavedUser();
   state.currentUser = null;
   state.currentTestKey = null;
@@ -590,27 +613,25 @@ async function openAdminPanel() {
     supabaseClient.from('users').select('*').order('id', { ascending: true }),
     supabaseClient.from('results').select('*').order('id', { ascending: false }),
     supabaseClient.from('test_access').select('*').gte('end_time', now).order('id', { ascending: false }),
-    supabaseClient.from('login_history').select('*').order('login_time', { ascending: false }).limit(200) // Загружаем последние 200 авторизаций
+    supabaseClient.from('login_history').select('*').order('login_time', { ascending: false }).limit(200) 
   ]);
 
   renderAdminPanel(usersRes.data || [], resultsRes.data || [], accessRes.data || [], historyRes.data || []);
 }
 
-// Универсальная функция фильтрации таблиц
 function filterTableRows(rowClassName, selectedKey) {
   document.querySelectorAll('.' + rowClassName).forEach(row => {
-    const rowKey = row.dataset.filterKey; // Теперь ищем универсальный атрибут data-filter-key
+    const rowKey = row.dataset.filterKey; 
     row.style.display = (selectedKey === 'all' || rowKey === selectedKey) ? '' : 'none';
   });
 }
 
 function init() {
-  // Проверка на загрузку Supabase (если скрипт заблокирован в index.html)
   if (typeof supabase === 'undefined') {
       const loginScreen = document.getElementById('screen-login');
       if(loginScreen) {
           loginScreen.classList.remove('hidden');
-          loginScreen.innerHTML = '<h2 style="color:#dc3545; padding:30px; text-align:center;">❌ Ошибка: База данных не загрузилась. Пожалуйста, отключите AdBlock / VPN или обновите страницу.</h2>';
+          loginScreen.innerHTML = '<h2 style="color:#dc3545; padding:30px; text-align:center;">❌ Ошибка: База данных не загрузилась.</h2>';
       }
       return;
   }
@@ -620,25 +641,25 @@ function init() {
     try {
       const parsed = JSON.parse(savedUserStr);
       
-      // Проверяем, не прошло ли 5 часов с момента логина
       if (parsed.loginTimestamp && (Date.now() - parsed.loginTimestamp > SESSION_LIMIT_MS)) {
           localStorage.removeItem('user');
-          alert('Время сессии (5 часов) истекло. Пожалуйста, войдите заново в целях безопасности.');
+          alert('Время сессии (5 часов) истекло. Пожалуйста, войдите заново.');
           renderLogin();
           return;
       }
 
       state.currentUser = parsed;
-      if (parsed.role === 'admin') {
-          openAdminPanel();
-      } else {
-          renderSelection();
-      }
+      
+      // Перезапускаем охранника при возвращении на вкладку
+      if (sessionCheckInterval) clearInterval(sessionCheckInterval);
+      sessionCheckInterval = setInterval(checkConcurrentLogin, 15000);
+
+      if (parsed.role === 'admin') openAdminPanel();
+      else renderSelection();
       return;
     } catch (e) { localStorage.removeItem('user'); }
   }
   renderLogin();
 }
 
-// Запускаем
 init();
