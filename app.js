@@ -44,7 +44,7 @@ const state = {
 const SESSION_LIMIT_MS = 5 * 60 * 60 * 1000;
 let sessionCheckInterval = null;
 let isLoggingIn = false;
-let allStudentsCache = []; // Кэш студентов для быстрой фильтрации по группам
+let allStudentsCache = [];
 
 function escapeHtml(value) {
   return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
@@ -702,11 +702,12 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
     </div>
     ` : ''}
   `;
-  await loadStudentsList();
+  
+  // Вызываем функцию БЕЗ await, так как renderAdminPanel синхронная!
+  loadStudentsList();
   switchAdminTab(currentAdminTab);
 }
 
-// Загружает студентов ОДИН РАЗ с сервера и кэширует
 async function loadStudentsList() {
   const container = document.getElementById('students-list');
   if (!container) return;
@@ -714,10 +715,9 @@ async function loadStudentsList() {
   if (error) { container.innerHTML = 'Ошибка загрузки'; return; }
   
   allStudentsCache = data || [];
-  renderStudentsCheckboxes('all'); // Рисуем все чекбоксы по умолчанию
+  renderStudentsCheckboxes('all'); 
 }
 
-// Отрисовывает чекбоксы из кэша (мгновенно)
 window.renderStudentsCheckboxes = function(groupFilter) {
   const container = document.getElementById('students-list');
   if (!container) return;
@@ -748,7 +748,6 @@ window.renderStudentsCheckboxes = function(groupFilter) {
   container.innerHTML = html;
 };
 
-// Массовое выделение
 window.selectAllCheckboxes = function() {
   document.querySelectorAll('.student-checkbox').forEach(cb => cb.checked = true);
 };
@@ -894,7 +893,6 @@ async function createUser() {
   const password = document.getElementById('new-password').value.trim();
   const role = document.getElementById('new-role').value;
   
-  // Добавляем сохранение группы, если это студент
   let groupName = 'Без группы';
   if (role === 'student') {
       groupName = document.getElementById('new-group').value;
