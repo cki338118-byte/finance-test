@@ -17,6 +17,7 @@ const screenAdmin = document.getElementById('screen-admin');
 let currentAdminTab = 'subjects';
 
 const TEST_TITLES = {
+  macroeconomics: 'Макроэкономика',
   personal_finance: 'Персональные финансы',
   portfolio_theory: 'Теория портфеля',
   econometrics: 'Эконометрика',
