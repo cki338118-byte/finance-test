@@ -44,6 +44,7 @@ const state = {
 const SESSION_LIMIT_MS = 5 * 60 * 60 * 1000;
 let sessionCheckInterval = null;
 let isLoggingIn = false;
+let allStudentsCache = []; // Кэш студентов для быстрой фильтрации по группам
 
 function escapeHtml(value) {
   return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
@@ -103,7 +104,6 @@ function getTestTitle(key) {
   return TEST_TITLES[key] || 'Тест';
 }
 
-// Возвращаем получение реального IP-адреса
 async function getIPAddress() {
   try {
     const response = await fetch('https://api.ipify.org?format=json');
@@ -178,7 +178,6 @@ async function handleLogin() {
   loginBtn.disabled = true;
   loginBtn.style.opacity = '0.7';
 
-  // 1. Получаем IP и проверяем на Бан
   const userIP = await getIPAddress();
   
   if (userIP !== 'Скрыт/VPN') {
@@ -193,7 +192,6 @@ async function handleLogin() {
     }
   }
 
-  // 2. Проверяем логин и пароль
   const { data, error } = await supabaseClient.from('users').select('*').eq('username', username).eq('password', password).single();
   
   if (error || !data) { 
@@ -497,7 +495,6 @@ window.deleteQuestion = async function(id) {
   else { openSubjectManager(state.activeSubjectKey); }
 };
 
-// Функции для БАНА по IP (доступны только супер-админу)
 window.banIP = async function(ip) {
   if (!ip || ip === 'Скрыт/VPN') { alert('Невозможно заблокировать скрытый IP.'); return; }
   if (!confirm(`Точно заблокировать доступ для IP: ${ip} ?`)) return;
@@ -538,10 +535,11 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
         <td>${escapeHtml(user.username)}</td>
         <td>${escapeHtml(user.password)}</td>
         <td>${escapeHtml(user.role)}</td>
+        <td>${escapeHtml(user.group_name || 'Без группы')}</td>
         <td>${canDelete ? `<button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteUser(${user.id})">❌</button>` : ''}</td>
       </tr>
     `;
-  }).join('') : `<tr><td colspan="5">Пользователей пока нет</td></tr>`;
+  }).join('') : `<tr><td colspan="6">Пользователей пока нет</td></tr>`;
 
   let roleOptions = `<option value="student">student (Студент)</option>`;
   if (isSuperadmin) {
@@ -572,7 +570,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
       </tr>
     `}).join('') : `<tr><td colspan="6">Результатов пока нет</td></tr>`;
 
-  // Кнопка БАН доступна только Супер-админу в истории входов
   const historyRows = history.length ? history.map(row => {
     let banBtn = '';
     if (isSuperadmin && row.ip_address !== 'Скрыт/VPN') {
@@ -587,7 +584,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
     `;
   }).join('') : `<tr><td colspan="3">Истории входов пока нет</td></tr>`;
 
-  // Таблица забаненных IP (только для Superadmin)
   const bannedRows = bannedIps.length ? bannedIps.map(row => `
       <tr>
         <td style="color:red; font-weight:bold;">${escapeHtml(row.ip_address)}</td>
@@ -640,18 +636,37 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
         <h2>Создать пользователя</h2>
         <input id="new-username" placeholder="Логин" autocomplete="off" />
         <input id="new-password" placeholder="Пароль" autocomplete="off" />
-        <select id="new-role">${roleOptions}</select>
-        <button class="btn-ok" onclick="createUser()">Создать</button>
+        <select id="new-role" onchange="document.getElementById('group-container').style.display = this.value === 'student' ? 'block' : 'none'">${roleOptions}</select>
+        
+        <div id="group-container" style="margin-top: 10px;">
+            <select id="new-group">
+                <option value="Группа 1">Группа 1</option>
+                <option value="Группа 2">Группа 2</option>
+                <option value="Без группы">Без группы</option>
+            </select>
+        </div>
+
+        <button class="btn-ok" style="margin-top: 15px;" onclick="createUser()">Создать</button>
       </div>
       <h2>Список пользователей</h2>
-      <div class="table-wrap"><table><tr><th>ID</th><th>Логин</th><th>Пароль</th><th>Роль</th><th>Удалить</th></tr>${userRows}</table></div>
+      <div class="table-wrap"><table><tr><th>ID</th><th>Логин</th><th>Пароль</th><th>Роль</th><th>Группа</th><th>Удалить</th></tr>${userRows}</table></div>
     </div>
     
     <div id="tab-exams" class="tab-content admin-section">
       <div class="card" style="box-shadow:none; margin-top:0; padding:0; margin-bottom: 20px;">
         <h2>Открыть доступ</h2>
         <select id="access-test">${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}</select>
+        
+        <label style="display:block;margin-top:15px; font-weight:bold;">Выберите студентов (Фильтр по группе):</label>
+        <select id="access-group-filter" onchange="renderStudentsCheckboxes(this.value)" style="margin-bottom: 10px;">
+            <option value="all">Все студенты</option>
+            <option value="Группа 1">Только Группа 1</option>
+            <option value="Группа 2">Только Группа 2</option>
+            <option value="Без группы">Без группы</option>
+        </select>
+
         <div id="students-list" class="students-list">Загрузка студентов...</div>
+        
         <label style="display:block;margin-top:15px;">Начало доступа</label><input id="access-start" type="datetime-local">
         <label style="display:block;margin-top:15px;">Конец доступа</label><input id="access-end" type="datetime-local">
         <button class="btn-ok" onclick="grantAccess()">Открыть доступ</button>
@@ -687,9 +702,60 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
     </div>
     ` : ''}
   `;
-  loadStudentsList();
+  await loadStudentsList();
   switchAdminTab(currentAdminTab);
 }
+
+// Загружает студентов ОДИН РАЗ с сервера и кэширует
+async function loadStudentsList() {
+  const container = document.getElementById('students-list');
+  if (!container) return;
+  const { data, error } = await supabaseClient.from('users').select('*').eq('role', 'student').order('id', { ascending: true });
+  if (error) { container.innerHTML = 'Ошибка загрузки'; return; }
+  
+  allStudentsCache = data || [];
+  renderStudentsCheckboxes('all'); // Рисуем все чекбоксы по умолчанию
+}
+
+// Отрисовывает чекбоксы из кэша (мгновенно)
+window.renderStudentsCheckboxes = function(groupFilter) {
+  const container = document.getElementById('students-list');
+  if (!container) return;
+
+  let filtered = allStudentsCache;
+  if (groupFilter !== 'all') {
+      filtered = allStudentsCache.filter(user => user.group_name === groupFilter);
+  }
+
+  let html = `
+    <div style="margin-bottom:10px;">
+      <button class="btn-gray" style="padding:5px 10px; font-size:12px; width:auto;" onclick="selectAllCheckboxes()">✅ Выбрать всех в списке</button> 
+      <button class="btn-gray" style="padding:5px 10px; font-size:12px; width:auto;" onclick="deselectAllCheckboxes()">❌ Снять выделение</button>
+    </div>
+    <div style="max-height: 200px; overflow-y: auto; border: 1px solid #d7dce3; padding: 10px; border-radius: 8px;">
+  `;
+
+  if (!filtered.length) { 
+      html += '<div class="muted" style="margin:0;">Студентов в этой группе не найдено.</div>'; 
+  } else {
+      filtered.forEach(user => {
+        const grp = user.group_name && user.group_name !== 'Без группы' ? ` <span style="color:#888; font-size:12px;">[${escapeHtml(user.group_name)}]</span>` : '';
+        html += `<label class="student-item" style="display:block; margin-bottom:5px;"><input type="checkbox" value="${escapeHtml(user.username)}" class="student-checkbox"><span>${escapeHtml(user.username)}${grp}</span></label>`;
+      });
+  }
+  
+  html += '</div>';
+  container.innerHTML = html;
+};
+
+// Массовое выделение
+window.selectAllCheckboxes = function() {
+  document.querySelectorAll('.student-checkbox').forEach(cb => cb.checked = true);
+};
+
+window.deselectAllCheckboxes = function() {
+  document.querySelectorAll('.student-checkbox').forEach(cb => cb.checked = false);
+};
 
 async function startTest(testKey) {
   document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px; text-align:center;">⏳ Загрузка вопросов...</h2>';
@@ -804,26 +870,13 @@ function logout(force = false) {
   renderLogin();
 }
 
-async function loadStudentsList() {
-  const container = document.getElementById('students-list');
-  if (!container) return;
-  const { data, error } = await supabaseClient.from('users').select('*').eq('role', 'student').order('id', { ascending: true });
-  if (error || !data.length) { container.innerHTML = '<div class="muted" style="margin:0;">Нет студентов</div>'; return; }
-
-  let html = '';
-  data.forEach(user => {
-    html += `<label class="student-item"><input type="checkbox" value="${escapeHtml(user.username)}" class="student-checkbox"><span>${escapeHtml(user.username)}</span></label>`;
-  });
-  container.innerHTML = html;
-}
-
 async function grantAccess() {
   const testKey = document.getElementById('access-test').value;
   const usernames = [...document.querySelectorAll('.student-checkbox:checked')].map(cb => cb.value);
   const startRaw = document.getElementById('access-start').value;
   const endRaw = document.getElementById('access-end').value;
 
-  if (!usernames.length || !startRaw || !endRaw) { alert('Заполните поля'); return; }
+  if (!usernames.length || !startRaw || !endRaw) { alert('Заполните поля и выберите студентов'); return; }
 
   const start = new Date(startRaw).toISOString();
   const end = new Date(endRaw).toISOString();
@@ -832,7 +885,7 @@ async function grantAccess() {
     await supabaseClient.from('test_access').delete().eq('username', username).eq('test_key', testKey);
     await supabaseClient.from('test_access').insert([{ username, test_key: testKey, start_time: start, end_time: end, is_active: true }]);
   }
-  alert('Доступ успешно открыт');
+  alert(`Доступ успешно открыт для ${usernames.length} студентов`);
   await openAdminPanel();
 }
 
@@ -840,10 +893,16 @@ async function createUser() {
   const username = document.getElementById('new-username').value.trim();
   const password = document.getElementById('new-password').value.trim();
   const role = document.getElementById('new-role').value;
+  
+  // Добавляем сохранение группы, если это студент
+  let groupName = 'Без группы';
+  if (role === 'student') {
+      groupName = document.getElementById('new-group').value;
+  }
 
   if (!username || !password) { alert('Заполните логин и пароль'); return; }
-  const { error } = await supabaseClient.from('users').insert([{ username, password, role }]);
-  if (error) alert('Ошибка создания пользователя');
+  const { error } = await supabaseClient.from('users').insert([{ username, password, role, group_name: groupName }]);
+  if (error) alert('Ошибка создания пользователя (возможно логин занят)');
   else { alert('Пользователь создан'); await openAdminPanel(); }
 }
 
