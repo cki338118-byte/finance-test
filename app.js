@@ -35,10 +35,14 @@ const state = {
   currentIndex: 0,
   score: 0,
   wrongQuestions: [],
-  isRepeatMode: false
+  isRepeatMode: false,
+  
+  // Для админки
+  adminQuestions: [],
+  activeSubjectKey: null,
+  editingQuestionId: null
 };
 
-// Лимит сессии 5 часов
 const SESSION_LIMIT_MS = 5 * 60 * 60 * 1000;
 let sessionCheckInterval = null;
 
@@ -102,9 +106,8 @@ function getDeviceInfo() {
   return `${device} (${browser})`;
 }
 
-// ПРОВЕРКА НА ОДНОВРЕМЕННЫЙ ВХОД (ОХРАННИК)
 async function checkConcurrentLogin() {
-  if (!state.currentUser || state.currentUser.role === 'admin') return; // Админа не проверяем так жестко
+  if (!state.currentUser || state.currentUser.role === 'admin' || state.currentUser.role === 'superadmin') return;
 
   const { data, error } = await supabaseClient
     .from('users')
@@ -113,9 +116,8 @@ async function checkConcurrentLogin() {
     .single();
 
   if (data && data.session_token !== state.currentUser.session_token) {
-    // Токен в базе изменился! Значит кто-то другой вошел под этим логином.
     alert('⚠️ Ваш аккаунт был использован на другом устройстве. Выполнен автоматический выход.');
-    logout(true); // Выкидываем без спроса
+    logout(true);
   }
 }
 
@@ -129,11 +131,8 @@ function renderLogin() {
     <button id="login-btn" class="btn-ok">Войти</button>
     <div class="small-note">Передача пароля другим лицам запрещена. При входе с другого устройства ваш сеанс будет прерван.</div>
   `;
-
   document.getElementById('login-btn').addEventListener('click', handleLogin);
-  document.getElementById('password').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') handleLogin();
-  });
+  document.getElementById('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
 }
 
 async function changeMyPassword() {
@@ -142,13 +141,12 @@ async function changeMyPassword() {
 
   const { error } = await supabaseClient.from('users').update({ password: newPassword.trim() }).eq('id', state.currentUser.id);
 
-  if (error) {
-    alert('Ошибка при смене пароля.');
-  } else {
+  if (error) alert('Ошибка при смене пароля.');
+  else {
     alert('Пароль успешно изменен!');
     state.currentUser.password = newPassword.trim();
     setSavedUser(state.currentUser);
-    if (state.currentUser.role === 'admin') openAdminPanel();
+    if (state.currentUser.role === 'admin' || state.currentUser.role === 'superadmin') openAdminPanel();
   }
 }
 
@@ -164,10 +162,7 @@ async function renderSelection() {
     .lte('start_time', now)
     .gte('end_time', now);
 
-  if (error) {
-    screenSelection.innerHTML = `<h1 style="color:red; text-align:center; margin-top:20px;">Ошибка доступа к базе</h1>`;
-    return;
-  }
+  if (error) { screenSelection.innerHTML = `<h1 style="color:red; text-align:center; margin-top:20px;">Ошибка доступа</h1>`; return; }
 
   let html = `
     <div class="screen-top">
@@ -182,13 +177,10 @@ async function renderSelection() {
     </div>
   `;
 
-  if (!data.length) {
-    html += `<div class="muted">Сейчас вам недоступны тесты</div>`;
-  } else {
+  if (!data.length) html += `<div class="muted">Сейчас вам недоступны тесты</div>`;
+  else {
     html += `<div class="grid">`;
-    data.forEach(test => {
-      html += `<button onclick="startTest('${test.test_key}')">${getTestTitle(test.test_key)}</button>`;
-    });
+    data.forEach(test => { html += `<button onclick="startTest('${test.test_key}')">${getTestTitle(test.test_key)}</button>`; });
     html += `</div>`;
   }
   screenSelection.innerHTML = html;
@@ -202,9 +194,7 @@ function renderQuizShell() {
         <h1 id="quiz-title" class="title-left">${escapeHtml(getTestTitle(state.currentTestKey))}</h1>
         <div class="subtitle-left">Пользователь: ${escapeHtml(state.currentUser.username)}</div>
       </div>
-      <div class="right">
-        <button class="btn-bad" onclick="logout()">🚪 Выйти</button>
-      </div>
+      <div class="right"><button class="btn-bad" onclick="logout()">🚪 Выйти</button></div>
     </div>
     <div id="counter"></div>
     <div class="progress"><div class="progress-bar" id="progress-bar"></div></div>
@@ -234,9 +224,7 @@ function renderResult() {
         <h1 class="title-left">Тест завершён</h1>
         <div class="subtitle-left">Пользователь: ${escapeHtml(state.currentUser.username)}</div>
       </div>
-      <div class="right">
-        <button class="btn-bad" onclick="logout()">🚪 Выйти</button>
-      </div>
+      <div class="right"><button class="btn-bad" onclick="logout()">🚪 Выйти</button></div>
     </div>
     <div class="result-score">${state.score} / ${total}</div>
     <div class="result-meta">Правильных: ${state.score}, ошибок: ${wrong}, процент: ${percent}%</div>
@@ -252,7 +240,6 @@ function switchAdminTab(tabId) {
   currentAdminTab = tabId;
   document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-  
   const btn = document.getElementById('btn-' + tabId);
   const content = document.getElementById('tab-' + tabId);
   if(btn && content) {
@@ -261,59 +248,245 @@ function switchAdminTab(tabId) {
   }
 }
 
+// ----------------------------------------------------
+// ЛОГИКА РЕДАКТОРА ПРЕДМЕТОВ (Только для Superadmin)
+// ----------------------------------------------------
+
+async function openSubjectManager(testKey) {
+  state.activeSubjectKey = testKey;
+  document.getElementById('subjects-list-container').classList.add('hidden');
+  document.getElementById('subject-editor-container').classList.remove('hidden');
+  document.getElementById('subject-editor-title').innerText = 'Загрузка вопросов...';
+
+  const { data, error } = await supabaseClient.from('questions').select('*').eq('test_key', testKey).order('id', { ascending: true });
+  if (error) { alert('Ошибка загрузки вопросов'); return; }
+
+  state.adminQuestions = data || [];
+  renderSubjectQuestionsList();
+}
+
+function closeSubjectManager() {
+  state.activeSubjectKey = null;
+  state.editingQuestionId = null;
+  document.getElementById('subject-editor-container').classList.add('hidden');
+  document.getElementById('subjects-list-container').classList.remove('hidden');
+}
+
+function renderSubjectQuestionsList() {
+  const isSuperadmin = state.currentUser.role === 'superadmin';
+  document.getElementById('subject-editor-title').innerText = `Вопросы: ${getTestTitle(state.activeSubjectKey)} (${state.adminQuestions.length})`;
+  
+  let html = '';
+  if (isSuperadmin) {
+    html += `<button class="btn-ok" style="margin-bottom: 15px;" onclick="openQuestionEditor(null)">+ Создать новый вопрос</button>`;
+  }
+
+  if (state.adminQuestions.length === 0) {
+    html += `<div class="muted">Вопросов пока нет.</div>`;
+  } else {
+    state.adminQuestions.forEach((q, index) => {
+      let answersHtml = q.a.map((ans, i) => `<div style="font-size:14px; margin-top:4px; ${i === q.c ? 'color:green; font-weight:bold;' : 'color:#555;'}">${i === q.c ? '✅' : '➖'} ${escapeHtml(ans)}</div>`).join('');
+      
+      html += `
+        <div class="card" style="margin-top: 10px; padding: 15px; box-shadow: none; border: 1px solid #d7dce3;">
+          <div style="font-weight: bold; font-size: 16px; margin-bottom: 8px;">${index + 1}. ${escapeHtml(q.q)}</div>
+          <div>${answersHtml}</div>
+          ${isSuperadmin ? `
+            <div style="margin-top: 12px; display:flex; gap:10px;">
+              <button class="btn-gray" style="padding:8px; width:auto; font-size:13px;" onclick="openQuestionEditor(${q.id})">✏️ Редактировать</button>
+              <button class="btn-bad" style="padding:8px; width:auto; font-size:13px;" onclick="deleteQuestion(${q.id})">❌ Удалить</button>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    });
+  }
+
+  document.getElementById('questions-list-render').innerHTML = html;
+  document.getElementById('question-form-container').classList.add('hidden');
+  document.getElementById('questions-list-render').classList.remove('hidden');
+}
+
+function openQuestionEditor(id) {
+  state.editingQuestionId = id;
+  document.getElementById('questions-list-render').classList.add('hidden');
+  const formContainer = document.getElementById('question-form-container');
+  formContainer.classList.remove('hidden');
+
+  let qText = '';
+  let answers = ['', ''];
+  let correctIdx = 0;
+
+  if (id) {
+    const qObj = state.adminQuestions.find(q => q.id === id);
+    if (qObj) {
+      qText = qObj.q;
+      answers = [...qObj.a];
+      correctIdx = qObj.c;
+    }
+  }
+
+  formContainer.innerHTML = `
+    <div class="card" style="box-shadow: none; border: 2px solid var(--primary); margin-top:0;">
+      <h3 style="margin-top:0;">${id ? 'Редактирование вопроса' : 'Новый вопрос'}</h3>
+      <label><strong>Текст вопроса:</strong></label>
+      <textarea id="edit-q-text" style="width:100%; height:80px; padding:10px; margin-top:5px; border-radius:8px; border:1px solid #ccc; font-family:inherit;">${escapeHtml(qText)}</textarea>
+      
+      <div style="margin-top:15px;"><strong>Варианты ответа (отметьте правильный):</strong></div>
+      <div id="edit-answers-list"></div>
+      
+      <button class="btn-gray" style="margin-top:10px; width:auto; padding:8px 15px;" onclick="addAnswerField()">+ Добавить вариант</button>
+      
+      <div style="margin-top: 20px; display:flex; gap:10px;">
+        <button class="btn-ok" onclick="saveQuestion()">Сохранить</button>
+        <button class="btn-gray" onclick="cancelQuestionEdit()">Отмена</button>
+      </div>
+    </div>
+  `;
+
+  // Рендерим инпуты для ответов
+  window._tempAnswers = answers;
+  window._tempCorrect = correctIdx;
+  renderAnswerFields();
+}
+
+function renderAnswerFields() {
+  const container = document.getElementById('edit-answers-list');
+  container.innerHTML = window._tempAnswers.map((ans, i) => `
+    <div style="display:flex; align-items:center; gap:10px; margin-top:8px;">
+      <input type="radio" name="correct_answer" value="${i}" ${i === window._tempCorrect ? 'checked' : ''} style="width:20px; height:20px; margin:0;" onchange="window._tempCorrect = ${i}">
+      <input type="text" class="edit-ans-input" value="${escapeHtml(ans)}" placeholder="Вариант ответа" style="margin:0; flex:1;" onchange="window._tempAnswers[${i}] = this.value">
+      <button class="btn-bad" style="width:auto; padding:8px; margin:0;" onclick="removeAnswerField(${i})">X</button>
+    </div>
+  `).join('');
+}
+
+window.addAnswerField = function() {
+  window._tempAnswers.push('');
+  renderAnswerFields();
+};
+
+window.removeAnswerField = function(idx) {
+  if (window._tempAnswers.length <= 2) { alert('Минимум 2 варианта ответа!'); return; }
+  window._tempAnswers.splice(idx, 1);
+  if (window._tempCorrect >= window._tempAnswers.length) window._tempCorrect = 0;
+  renderAnswerFields();
+};
+
+window.cancelQuestionEdit = function() {
+  document.getElementById('question-form-container').classList.add('hidden');
+  document.getElementById('questions-list-render').classList.remove('hidden');
+};
+
+window.saveQuestion = async function() {
+  const qText = document.getElementById('edit-q-text').value.trim();
+  const inputs = document.querySelectorAll('.edit-ans-input');
+  const answers = Array.from(inputs).map(inp => inp.value.trim());
+  
+  if (!qText) { alert('Введите текст вопроса!'); return; }
+  if (answers.some(a => !a)) { alert('Заполните все варианты ответов!'); return; }
+
+  const payload = {
+    test_key: state.activeSubjectKey,
+    q: qText,
+    a: answers,
+    c: window._tempCorrect
+  };
+
+  document.getElementById('question-form-container').innerHTML = '<h3>Сохранение...</h3>';
+
+  if (state.editingQuestionId) {
+    // Обновление
+    const { error } = await supabaseClient.from('questions').update(payload).eq('id', state.editingQuestionId);
+    if (error) { alert('Ошибка сохранения'); console.error(error); }
+  } else {
+    // Создание
+    const { error } = await supabaseClient.from('questions').insert([payload]);
+    if (error) { alert('Ошибка создания'); console.error(error); }
+  }
+  
+  // Перезагружаем список вопросов
+  openSubjectManager(state.activeSubjectKey);
+};
+
+window.deleteQuestion = async function(id) {
+  if (!confirm('Точно удалить этот вопрос?')) return;
+  const { error } = await supabaseClient.from('questions').delete().eq('id', id);
+  if (error) { alert('Ошибка удаления'); console.error(error); }
+  else { openSubjectManager(state.activeSubjectKey); }
+};
+
+// ----------------------------------------------------
+
 function renderAdminPanel(users = [], results = [], accesses = [], history = []) {
   showScreen('screen-admin');
+  const isSuperadmin = state.currentUser.role === 'superadmin';
 
-  const subjectRows = Object.keys(TEST_TITLES).map(key => `<tr><td>${escapeHtml(TEST_TITLES[key])}</td><td><code>${escapeHtml(key)}</code></td></tr>`).join('');
+  // Вкладка ПРЕДМЕТЫ
+  const subjectsGrid = Object.keys(TEST_TITLES).map(key => `
+    <div class="card" style="box-shadow:none; border:1px solid #d7dce3; margin-top:10px; display:flex; justify-content:space-between; align-items:center; padding:15px;">
+      <div>
+        <div style="font-weight:bold; font-size:16px;">${escapeHtml(TEST_TITLES[key])}</div>
+        <div style="font-size:12px; color:#888; margin-top:4px;">Ключ: ${escapeHtml(key)}</div>
+      </div>
+      <button class="btn-primary" style="width:auto; padding:10px 20px; margin:0;" onclick="openSubjectManager('${key}')">Управление</button>
+    </div>
+  `).join('');
 
-  const userRows = users.length
-    ? users.map(user => `
-        <tr>
-          <td>${escapeHtml(user.id)}</td>
-          <td>${escapeHtml(user.username)}</td>
-          <td>${escapeHtml(user.password)}</td>
-          <td>${escapeHtml(user.role)}</td>
-          <td>${user.username === state.currentUser.username ? '' : `<button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteUser(${user.id})">❌</button>`}</td>
-        </tr>
-      `).join('')
-    : `<tr><td colspan="5">Пользователей пока нет</td></tr>`;
+  // Логика ролей: обычный админ видит только удаление студентов
+  const userRows = users.length ? users.map(user => {
+    let canDelete = false;
+    if (isSuperadmin && user.username !== state.currentUser.username) canDelete = true;
+    else if (!isSuperadmin && user.role === 'student') canDelete = true;
 
-  const accessRows = accesses.length
-    ? accesses.map(row => `
-        <tr class="access-row" data-filter-key="${row.test_key}">
-          <td>${escapeHtml(row.username)}</td>
-          <td>${escapeHtml(getTestTitle(row.test_key))}</td>
-          <td>${new Date(row.start_time).toLocaleString()}</td>
-          <td>${new Date(row.end_time).toLocaleString()}</td>
-          <td><button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteAccess(${row.id})">❌</button></td>
-        </tr>
-      `).join('')
-    : `<tr><td colspan="5">Нет активных доступов</td></tr>`;
+    return `
+      <tr>
+        <td>${escapeHtml(user.id)}</td>
+        <td>${escapeHtml(user.username)}</td>
+        <td>${escapeHtml(user.password)}</td>
+        <td>${escapeHtml(user.role)}</td>
+        <td>${canDelete ? `<button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteUser(${user.id})">❌</button>` : ''}</td>
+      </tr>
+    `;
+  }).join('') : `<tr><td colspan="5">Пользователей пока нет</td></tr>`;
 
-  const resultRows = results.length
-    ? results.map(row => {
-        const testKey = Object.keys(TEST_TITLES).find(k => TEST_TITLES[k] === row.test_name) || 'unknown';
-        return `
-        <tr class="result-row" data-filter-key="${testKey}">
-          <td>${escapeHtml(row.id)}</td>
-          <td>${escapeHtml(row.username)}</td>
-          <td>${escapeHtml(row.test_name)}</td>
-          <td>${escapeHtml(row.score)}/${escapeHtml(row.total)}</td>
-          <td>${escapeHtml(row.percentage)}%</td>
-          <td><button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteResult(${row.id})">❌</button></td>
-        </tr>
-      `}).join('')
-    : `<tr><td colspan="6">Результатов пока нет</td></tr>`;
+  // Опции для создания ролей (только superadmin может создавать админов)
+  let roleOptions = `<option value="student">student (Студент)</option>`;
+  if (isSuperadmin) {
+    roleOptions += `<option value="admin">admin (Обычный Админ)</option>
+                    <option value="superadmin">superadmin (Главный Админ)</option>`;
+  }
 
-  const historyRows = history.length
-    ? history.map(row => `
-        <tr class="history-row" data-filter-key="${escapeHtml(row.username)}">
-          <td>${escapeHtml(row.username)}</td>
-          <td>${escapeHtml(row.ip_address)}</td>
-          <td>${new Date(row.login_time).toLocaleString()}</td>
-        </tr>
-      `).join('')
-    : `<tr><td colspan="3">Истории входов пока нет</td></tr>`;
+  const accessRows = accesses.length ? accesses.map(row => `
+      <tr class="access-row" data-filter-key="${row.test_key}">
+        <td>${escapeHtml(row.username)}</td>
+        <td>${escapeHtml(getTestTitle(row.test_key))}</td>
+        <td>${new Date(row.start_time).toLocaleString()}</td>
+        <td>${new Date(row.end_time).toLocaleString()}</td>
+        <td><button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteAccess(${row.id})">❌</button></td>
+      </tr>
+    `).join('') : `<tr><td colspan="5">Нет активных доступов</td></tr>`;
+
+  const resultRows = results.length ? results.map(row => {
+      const testKey = Object.keys(TEST_TITLES).find(k => TEST_TITLES[k] === row.test_name) || 'unknown';
+      return `
+      <tr class="result-row" data-filter-key="${testKey}">
+        <td>${escapeHtml(row.id)}</td>
+        <td>${escapeHtml(row.username)}</td>
+        <td>${escapeHtml(row.test_name)}</td>
+        <td>${escapeHtml(row.score)}/${escapeHtml(row.total)}</td>
+        <td>${escapeHtml(row.percentage)}%</td>
+        <td><button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteResult(${row.id})">❌</button></td>
+      </tr>
+    `}).join('') : `<tr><td colspan="6">Результатов пока нет</td></tr>`;
+
+  const historyRows = history.length ? history.map(row => `
+      <tr class="history-row" data-filter-key="${escapeHtml(row.username)}">
+        <td>${escapeHtml(row.username)}</td>
+        <td>${escapeHtml(row.ip_address)}</td>
+        <td>${new Date(row.login_time).toLocaleString()}</td>
+      </tr>
+    `).join('') : `<tr><td colspan="3">Истории входов пока нет</td></tr>`;
 
   const uniqueUsers = [...new Set(users.map(u => u.username))];
   const historyUserOptions = uniqueUsers.map(u => `<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`).join('');
@@ -322,24 +495,34 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
     <div class="screen-top">
       <div class="left">
         <h1 class="title-left">Админ-панель</h1>
-        <div class="subtitle-left">Администратор: ${escapeHtml(state.currentUser.username)}</div>
+        <div class="subtitle-left">Статус: ${isSuperadmin ? 'Главный Администратор' : 'Администратор'} | ${escapeHtml(state.currentUser.username)}</div>
       </div>
       <div class="right">
         <button class="btn-gray" onclick="changeMyPassword()">🔑 Пароль</button>
         <button class="btn-bad" onclick="logout()">🚪 Выйти</button>
       </div>
     </div>
+    
     <div class="admin-tabs">
-      <button id="btn-subjects" class="tab-btn" onclick="switchAdminTab('subjects')">Предметы</button>
-      <button id="btn-students" class="tab-btn" onclick="switchAdminTab('students')">Студенты</button>
-      <button id="btn-exams" class="tab-btn" onclick="switchAdminTab('exams')">Экзамены</button>
+      <button id="btn-subjects" class="tab-btn" onclick="switchAdminTab('subjects')">Предметы и тесты</button>
+      <button id="btn-students" class="tab-btn" onclick="switchAdminTab('students')">Пользователи</button>
+      <button id="btn-exams" class="tab-btn" onclick="switchAdminTab('exams')">Доступы</button>
       <button id="btn-results" class="tab-btn" onclick="switchAdminTab('results')">Результаты</button>
       <button id="btn-history" class="tab-btn" onclick="switchAdminTab('history')">История</button>
     </div>
     
     <div id="tab-subjects" class="tab-content admin-section">
-      <h2>Список тестовых предметов</h2>
-      <div class="table-wrap"><table><tr><th>Название</th><th>Системный ключ</th></tr>${subjectRows}</table></div>
+      <div id="subjects-list-container">
+        <h2>Список предметов</h2>
+        <div style="margin-top:15px;">${subjectsGrid}</div>
+      </div>
+      
+      <div id="subject-editor-container" class="hidden">
+        <button class="btn-gray" style="margin-bottom:15px; width:auto; padding: 10px 20px;" onclick="closeSubjectManager()">🔙 Назад к списку</button>
+        <h2 id="subject-editor-title" style="text-align:left;">Управление вопросами</h2>
+        <div id="question-form-container" class="hidden"></div>
+        <div id="questions-list-render"></div>
+      </div>
     </div>
     
     <div id="tab-students" class="tab-content admin-section">
@@ -347,10 +530,7 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
         <h2>Создать пользователя</h2>
         <input id="new-username" placeholder="Логин" autocomplete="off" />
         <input id="new-password" placeholder="Пароль" autocomplete="off" />
-        <select id="new-role">
-          <option value="student">student (Студент)</option>
-          <option value="admin">admin (Админ)</option>
-        </select>
+        <select id="new-role">${roleOptions}</select>
         <button class="btn-ok" onclick="createUser()">Создать</button>
       </div>
       <h2>Список пользователей</h2>
@@ -365,7 +545,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
         <label style="display:block;margin-top:15px;">Начало доступа</label><input id="access-start" type="datetime-local">
         <label style="display:block;margin-top:15px;">Конец доступа</label><input id="access-end" type="datetime-local">
         <button class="btn-ok" onclick="grantAccess()">Открыть доступ</button>
-        <div class="access-note">Выберите одного или нескольких студентов. Попытки не ограничены.</div>
       </div>
       <h2>Активные доступы</h2>
       <select id="filter-access" onchange="filterTableRows('access-row', this.value)" style="margin-bottom: 15px;">
@@ -402,25 +581,20 @@ async function handleLogin() {
   const { data, error } = await supabaseClient.from('users').select('*').eq('username', username).eq('password', password).single();
   if (error || !data) { alert('Неверный логин или пароль'); return; }
 
-  // Создаем УНИКАЛЬНЫЙ токен сессии (ключ защиты от одновременного входа)
   const sessionToken = Math.random().toString(36).substring(2, 15);
-  
-  // Сохраняем токен в базу
   await supabaseClient.from('users').update({ session_token: sessionToken }).eq('id', data.id);
 
   const deviceInfo = getDeviceInfo();
   await supabaseClient.from('login_history').insert([{ username: data.username, ip_address: deviceInfo }]);
 
   const sessionData = { ...data, session_token: sessionToken, loginTimestamp: Date.now() };
-
   state.currentUser = sessionData;
   setSavedUser(sessionData);
 
-  // Запускаем охранника, который будет проверять вход каждые 15 секунд
   if (sessionCheckInterval) clearInterval(sessionCheckInterval);
   sessionCheckInterval = setInterval(checkConcurrentLogin, 15000);
 
-  if (data.role === 'admin') await openAdminPanel();
+  if (data.role === 'admin' || data.role === 'superadmin') await openAdminPanel();
   else await renderSelection();
 }
 
@@ -428,11 +602,7 @@ async function startTest(testKey) {
   document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px; text-align:center;">⏳ Загрузка вопросов...</h2>';
   const { data, error } = await supabaseClient.from('questions').select('*').eq('test_key', testKey);
 
-  if (error || !data || data.length === 0) {
-    alert('Вопросы для этого предмета еще не добавлены в базу!');
-    renderSelection();
-    return;
-  }
+  if (error || !data || data.length === 0) { alert('Вопросы для этого предмета еще не добавлены в базу!'); renderSelection(); return; }
   state.currentTestKey = testKey;
   state.questions = shuffleArray(data.map(cloneQuestion));
   state.currentIndex = 0;
@@ -490,14 +660,7 @@ function nextQuestion() {
 async function saveResult() {
   const total = state.questions.length || 1;
   const percentage = Number(((state.score / total) * 100).toFixed(2));
-  const { error } = await supabaseClient.from('results').insert([{
-    username: state.currentUser.username,
-    test_name: getTestTitle(state.currentTestKey),
-    score: state.score,
-    total: state.questions.length,
-    percentage: percentage
-  }]);
-  if (error) console.error('Ошибка сохранения результата:', error);
+  await supabaseClient.from('results').insert([{ username: state.currentUser.username, test_name: getTestTitle(state.currentTestKey), score: state.score, total: state.questions.length, percentage: percentage }]);
 }
 
 async function finishQuiz() {
@@ -524,9 +687,7 @@ function backToSelection() {
 
 function logout(force = false) {
   if (!force && !confirm('Вы уверены, что хотите выйти из системы?')) return;
-  
   if (sessionCheckInterval) clearInterval(sessionCheckInterval);
-  
   clearSavedUser();
   state.currentUser = null;
   state.currentTestKey = null;
@@ -541,13 +702,11 @@ function logout(force = false) {
 async function loadStudentsList() {
   const container = document.getElementById('students-list');
   if (!container) return;
-  const { data, error } = await supabaseClient.from('users').select('*').neq('role', 'admin').order('id', { ascending: true });
-  if (error) { container.innerHTML = 'Ошибка загрузки'; return; }
-  const students = data || [];
-  if (!students.length) { container.innerHTML = '<div class="muted" style="margin:0;">Нет студентов</div>'; return; }
+  const { data, error } = await supabaseClient.from('users').select('*').eq('role', 'student').order('id', { ascending: true });
+  if (error || !data.length) { container.innerHTML = '<div class="muted" style="margin:0;">Нет студентов</div>'; return; }
 
   let html = '';
-  students.forEach(user => {
+  data.forEach(user => {
     html += `<label class="student-item"><input type="checkbox" value="${escapeHtml(user.username)}" class="student-checkbox"><span>${escapeHtml(user.username)}</span></label>`;
   });
   container.innerHTML = html;
@@ -566,8 +725,7 @@ async function grantAccess() {
 
   for (const username of usernames) {
     await supabaseClient.from('test_access').delete().eq('username', username).eq('test_key', testKey);
-    const { error } = await supabaseClient.from('test_access').insert([{ username, test_key: testKey, start_time: start, end_time: end, is_active: true }]);
-    if (error) { alert('Ошибка выдачи доступа'); return; }
+    await supabaseClient.from('test_access').insert([{ username, test_key: testKey, start_time: start, end_time: end, is_active: true }]);
   }
   alert('Доступ успешно открыт');
   await openAdminPanel();
@@ -580,10 +738,8 @@ async function createUser() {
 
   if (!username || !password) { alert('Заполните логин и пароль'); return; }
   const { error } = await supabaseClient.from('users').insert([{ username, password, role }]);
-  if (error) { alert('Ошибка создания пользователя'); return; }
-  
-  alert('Пользователь создан');
-  await openAdminPanel();
+  if (error) alert('Ошибка создания пользователя');
+  else { alert('Пользователь создан'); await openAdminPanel(); }
 }
 
 async function deleteUser(id) {
@@ -621,8 +777,7 @@ async function openAdminPanel() {
 
 function filterTableRows(rowClassName, selectedKey) {
   document.querySelectorAll('.' + rowClassName).forEach(row => {
-    const rowKey = row.dataset.filterKey; 
-    row.style.display = (selectedKey === 'all' || rowKey === selectedKey) ? '' : 'none';
+    row.style.display = (selectedKey === 'all' || row.dataset.filterKey === selectedKey) ? '' : 'none';
   });
 }
 
@@ -649,12 +804,10 @@ function init() {
       }
 
       state.currentUser = parsed;
-      
-      // Перезапускаем охранника при возвращении на вкладку
       if (sessionCheckInterval) clearInterval(sessionCheckInterval);
       sessionCheckInterval = setInterval(checkConcurrentLogin, 15000);
 
-      if (parsed.role === 'admin') openAdminPanel();
+      if (parsed.role === 'admin' || parsed.role === 'superadmin') openAdminPanel();
       else renderSelection();
       return;
     } catch (e) { localStorage.removeItem('user'); }
