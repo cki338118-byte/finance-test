@@ -103,23 +103,15 @@ function getTestTitle(key) {
   return TEST_TITLES[key] || 'Тест';
 }
 
-function getDeviceInfo() {
-  const ua = navigator.userAgent;
-  let device = "Неизвестное устройство";
-  if (/android/i.test(ua)) device = "Android";
-  else if (/iPad|iPhone|iPod/.test(ua)) device = "iOS";
-  else if (/Windows/.test(ua)) device = "Windows";
-  else if (/Mac/.test(ua)) device = "Mac OS";
-  else if (/Linux/.test(ua)) device = "Linux";
-
-  let browser = "Браузер";
-  if (/Edg/.test(ua)) browser = "Edge";
-  else if (/OPR|Opera/.test(ua)) browser = "Opera";
-  else if (/Chrome/.test(ua)) browser = "Chrome";
-  else if (/Safari/.test(ua)) browser = "Safari";
-  else if (/Firefox/.test(ua)) browser = "Firefox";
-
-  return `${device} (${browser})`;
+// Возвращаем получение реального IP-адреса
+async function getIPAddress() {
+  try {
+    const response = await fetch('https://api.ipify.org?format=json');
+    const data = await response.json();
+    return data.ip;
+  } catch (e) {
+    return 'Скрыт/VPN';
+  }
 }
 
 async function securityCheck() {
@@ -164,7 +156,7 @@ function renderLogin() {
     <input id="username" placeholder="Логин" autocomplete="username" />
     <input id="password" type="password" placeholder="Пароль" autocomplete="current-password" />
     <button id="login-btn" class="btn-ok">Войти</button>
-    <div class="small-note">Передача пароля другим лицам запрещена. При входе с другого устройства ваш сеанс будет прерван.</div>
+    <div class="small-note">Доступ строго контролируется. Нарушители блокируются по IP.</div>
   `;
   document.getElementById('login-btn').addEventListener('click', handleLogin);
   document.getElementById('password').addEventListener('keydown', (e) => { 
@@ -186,6 +178,22 @@ async function handleLogin() {
   loginBtn.disabled = true;
   loginBtn.style.opacity = '0.7';
 
+  // 1. Получаем IP и проверяем на Бан
+  const userIP = await getIPAddress();
+  
+  if (userIP !== 'Скрыт/VPN') {
+    const { data: banData } = await supabaseClient.from('banned_ips').select('*').eq('ip_address', userIP).single();
+    if (banData) {
+      alert('⛔ Доступ с вашего IP-адреса заблокирован администратором.');
+      isLoggingIn = false;
+      loginBtn.innerText = originalBtnText;
+      loginBtn.disabled = false;
+      loginBtn.style.opacity = '1';
+      return;
+    }
+  }
+
+  // 2. Проверяем логин и пароль
   const { data, error } = await supabaseClient.from('users').select('*').eq('username', username).eq('password', password).single();
   
   if (error || !data) { 
@@ -200,8 +208,7 @@ async function handleLogin() {
   const sessionToken = Math.random().toString(36).substring(2, 15);
   await supabaseClient.from('users').update({ session_token: sessionToken }).eq('id', data.id);
 
-  const deviceInfo = getDeviceInfo();
-  await supabaseClient.from('login_history').insert([{ username: data.username, ip_address: deviceInfo }]);
+  await supabaseClient.from('login_history').insert([{ username: data.username, ip_address: userIP }]);
 
   const sessionData = { ...data, session_token: sessionToken, loginTimestamp: Date.now() };
   state.currentUser = sessionData;
@@ -490,7 +497,23 @@ window.deleteQuestion = async function(id) {
   else { openSubjectManager(state.activeSubjectKey); }
 };
 
-function renderAdminPanel(users = [], results = [], accesses = [], history = []) {
+// Функции для БАНА по IP (доступны только супер-админу)
+window.banIP = async function(ip) {
+  if (!ip || ip === 'Скрыт/VPN') { alert('Невозможно заблокировать скрытый IP.'); return; }
+  if (!confirm(`Точно заблокировать доступ для IP: ${ip} ?`)) return;
+  
+  const { error } = await supabaseClient.from('banned_ips').insert([{ ip_address: ip }]);
+  if (error) { alert('Ошибка (возможно IP уже в бане)'); }
+  else { alert('IP успешно заблокирован!'); openAdminPanel(); }
+};
+
+window.unbanIP = async function(id) {
+  if (!confirm('Снять блокировку с этого IP?')) return;
+  await supabaseClient.from('banned_ips').delete().eq('id', id);
+  openAdminPanel();
+};
+
+function renderAdminPanel(users = [], results = [], accesses = [], history = [], bannedIps = []) {
   showScreen('screen-admin');
   const isSuperadmin = state.currentUser.role === 'superadmin';
 
@@ -549,13 +572,29 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
       </tr>
     `}).join('') : `<tr><td colspan="6">Результатов пока нет</td></tr>`;
 
-  const historyRows = history.length ? history.map(row => `
+  // Кнопка БАН доступна только Супер-админу в истории входов
+  const historyRows = history.length ? history.map(row => {
+    let banBtn = '';
+    if (isSuperadmin && row.ip_address !== 'Скрыт/VPN') {
+      banBtn = `<button class="btn-bad" style="padding:4px 8px; font-size:12px; margin-left:10px; width:auto;" onclick="banIP('${escapeHtml(row.ip_address)}')">⛔ Бан</button>`;
+    }
+    return `
       <tr class="history-row" data-filter-key="${escapeHtml(row.username)}">
         <td>${escapeHtml(row.username)}</td>
-        <td>${escapeHtml(row.ip_address)}</td>
+        <td>${escapeHtml(row.ip_address)} ${banBtn}</td>
         <td>${new Date(row.login_time).toLocaleString()}</td>
       </tr>
-    `).join('') : `<tr><td colspan="3">Истории входов пока нет</td></tr>`;
+    `;
+  }).join('') : `<tr><td colspan="3">Истории входов пока нет</td></tr>`;
+
+  // Таблица забаненных IP (только для Superadmin)
+  const bannedRows = bannedIps.length ? bannedIps.map(row => `
+      <tr>
+        <td style="color:red; font-weight:bold;">${escapeHtml(row.ip_address)}</td>
+        <td>${new Date(row.banned_at).toLocaleString()}</td>
+        <td><button class="btn-ok" style="padding:8px 15px; width:auto;" onclick="unbanIP(${row.id})">Разблокировать</button></td>
+      </tr>
+  `).join('') : `<tr><td colspan="3">Черный список пуст</td></tr>`;
 
   const uniqueUsers = [...new Set(users.map(u => u.username))];
   const historyUserOptions = uniqueUsers.map(u => `<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`).join('');
@@ -574,11 +613,12 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
     </div>
     
     <div class="admin-tabs">
-      <button id="btn-subjects" class="tab-btn" onclick="switchAdminTab('subjects')">Предметы и тесты</button>
+      <button id="btn-subjects" class="tab-btn" onclick="switchAdminTab('subjects')">Предметы</button>
       <button id="btn-students" class="tab-btn" onclick="switchAdminTab('students')">Пользователи</button>
       <button id="btn-exams" class="tab-btn" onclick="switchAdminTab('exams')">Доступы</button>
       <button id="btn-results" class="tab-btn" onclick="switchAdminTab('results')">Результаты</button>
       <button id="btn-history" class="tab-btn" onclick="switchAdminTab('history')">История</button>
+      ${isSuperadmin ? `<button id="btn-blacklist" class="tab-btn" style="color: red;" onclick="switchAdminTab('blacklist')">Бан-лист</button>` : ''}
     </div>
     
     <div id="tab-subjects" class="tab-content admin-section">
@@ -636,8 +676,16 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [])
       <select id="filter-history" onchange="filterTableRows('history-row', this.value)" style="margin-bottom: 15px;">
         <option value="all">Все пользователи</option>${historyUserOptions}
       </select>
-      <div class="table-wrap"><table><tr><th>Пользователь</th><th>Устройство</th><th>Время входа</th></tr>${historyRows}</table></div>
+      <div class="table-wrap"><table><tr><th>Пользователь</th><th>IP-адрес</th><th>Время входа</th></tr>${historyRows}</table></div>
     </div>
+
+    ${isSuperadmin ? `
+    <div id="tab-blacklist" class="tab-content admin-section">
+      <h2 style="color:red;">Черный список IP-адресов</h2>
+      <div class="muted" style="margin-bottom: 15px;">Заблокированные устройства не смогут войти в систему под любым логином.</div>
+      <div class="table-wrap"><table><tr><th>IP-адрес</th><th>Дата блокировки</th><th>Действие</th></tr>${bannedRows}</table></div>
+    </div>
+    ` : ''}
   `;
   loadStudentsList();
   switchAdminTab(currentAdminTab);
@@ -822,14 +870,21 @@ async function openAdminPanel() {
   const now = new Date().toISOString();
   await supabaseClient.from('test_access').delete().lt('end_time', now);
 
-  const [usersRes, resultsRes, accessRes, historyRes] = await Promise.all([
+  const [usersRes, resultsRes, accessRes, historyRes, bannedRes] = await Promise.all([
     supabaseClient.from('users').select('*').order('id', { ascending: true }),
     supabaseClient.from('results').select('*').order('id', { ascending: false }),
     supabaseClient.from('test_access').select('*').gte('end_time', now).order('id', { ascending: false }),
-    supabaseClient.from('login_history').select('*').order('login_time', { ascending: false }).limit(200) 
+    supabaseClient.from('login_history').select('*').order('login_time', { ascending: false }).limit(200),
+    supabaseClient.from('banned_ips').select('*').order('banned_at', { ascending: false })
   ]);
 
-  renderAdminPanel(usersRes.data || [], resultsRes.data || [], accessRes.data || [], historyRes.data || []);
+  renderAdminPanel(
+    usersRes.data || [], 
+    resultsRes.data || [], 
+    accessRes.data || [], 
+    historyRes.data || [],
+    bannedRes.data || []
+  );
 }
 
 function filterTableRows(rowClassName, selectedKey) {
