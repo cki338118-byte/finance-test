@@ -68,7 +68,6 @@ function showScreen(activeId) {
   const target = document.getElementById(activeId);
   if(target) {
       target.classList.remove('hidden');
-      // Добавляем индикатор загрузки, чтобы экран не был белым
       if (activeId === 'screen-selection' || activeId === 'screen-admin') {
           target.innerHTML = '<h2 style="text-align:center; padding: 50px; color:#6b7280;">⏳ Загрузка данных...</h2>';
       }
@@ -85,6 +84,17 @@ function clearSavedUser() {
 
 function getTestTitle(key) {
   return TEST_TITLES[key] || 'Тест';
+}
+
+// Функция для получения IP адреса пользователя
+async function getIPAddress() {
+  try {
+    const response = await fetch('https://api.ipify.org?format=json');
+    const data = await response.json();
+    return data.ip;
+  } catch (e) {
+    return 'Не удалось определить';
+  }
 }
 
 function renderLogin() {
@@ -233,7 +243,7 @@ function switchAdminTab(tabId) {
   }
 }
 
-function renderAdminPanel(users = [], results = [], accesses = []) {
+function renderAdminPanel(users = [], results = [], accesses = [], history = []) {
   showScreen('screen-admin');
 
   const subjectRows = Object.keys(TEST_TITLES).map(key => `
@@ -279,6 +289,17 @@ function renderAdminPanel(users = [], results = [], accesses = []) {
       `}).join('')
     : `<tr><td colspan="6">Результатов пока нет</td></tr>`;
 
+  // Генерация таблицы истории входов
+  const historyRows = history.length
+    ? history.map(row => `
+        <tr>
+          <td>${escapeHtml(row.username)}</td>
+          <td>${escapeHtml(row.ip_address)}</td>
+          <td>${new Date(row.login_time).toLocaleString()}</td>
+        </tr>
+      `).join('')
+    : `<tr><td colspan="3">Истории входов пока нет</td></tr>`;
+
   screenAdmin.innerHTML = `
     <div class="screen-top">
       <div class="left">
@@ -295,11 +316,14 @@ function renderAdminPanel(users = [], results = [], accesses = []) {
       <button id="btn-students" class="tab-btn" onclick="switchAdminTab('students')">Студенты</button>
       <button id="btn-exams" class="tab-btn" onclick="switchAdminTab('exams')">Экзамены</button>
       <button id="btn-results" class="tab-btn" onclick="switchAdminTab('results')">Результаты</button>
+      <button id="btn-history" class="tab-btn" onclick="switchAdminTab('history')">История входов</button>
     </div>
+    
     <div id="tab-subjects" class="tab-content admin-section">
       <h2>Список тестовых предметов</h2>
       <div class="table-wrap"><table><tr><th>Название</th><th>Системный ключ</th></tr>${subjectRows}</table></div>
     </div>
+    
     <div id="tab-students" class="tab-content admin-section">
       <div class="card" style="box-shadow:none; margin-top:0; padding:0; margin-bottom: 20px;">
         <h2>Создать пользователя</h2>
@@ -314,6 +338,7 @@ function renderAdminPanel(users = [], results = [], accesses = []) {
       <h2>Список пользователей</h2>
       <div class="table-wrap"><table><tr><th>ID</th><th>Логин</th><th>Пароль</th><th>Роль</th><th>Удалить</th></tr>${userRows}</table></div>
     </div>
+    
     <div id="tab-exams" class="tab-content admin-section">
       <div class="card" style="box-shadow:none; margin-top:0; padding:0; margin-bottom: 20px;">
         <h2>Открыть доступ</h2>
@@ -330,12 +355,18 @@ function renderAdminPanel(users = [], results = [], accesses = []) {
       </select>
       <div class="table-wrap"><table><tr><th>Студент</th><th>Предмет</th><th>Начало</th><th>Конец</th><th>Удалить</th></tr>${accessRows}</table></div>
     </div>
+    
     <div id="tab-results" class="tab-content admin-section">
       <h2>Результаты тестов</h2>
       <select id="filter-result" onchange="filterTableRows('result-row', this.value)" style="margin-bottom: 15px;">
         <option value="all">Все предметы</option>${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
       </select>
       <div class="table-wrap"><table><tr><th>ID</th><th>Пользователь</th><th>Тест</th><th>Баллы</th><th>%</th><th>Удалить</th></tr>${resultRows}</table></div>
+    </div>
+
+    <div id="tab-history" class="tab-content admin-section">
+      <h2>История авторизаций</h2>
+      <div class="table-wrap"><table><tr><th>Пользователь</th><th>IP-адрес</th><th>Время входа</th></tr>${historyRows}</table></div>
     </div>
   `;
   loadStudentsList();
@@ -349,6 +380,10 @@ async function handleLogin() {
 
   const { data, error } = await supabaseClient.from('users').select('*').eq('username', username).eq('password', password).single();
   if (error || !data) { alert('Неверный логин или пароль'); return; }
+
+  // Успешный логин -> получаем IP и пишем в историю
+  const userIP = await getIPAddress();
+  await supabaseClient.from('login_history').insert([{ username: data.username, ip_address: userIP }]);
 
   state.currentUser = data;
   setSavedUser(data);
@@ -538,13 +573,14 @@ async function openAdminPanel() {
   const now = new Date().toISOString();
   await supabaseClient.from('test_access').delete().lt('end_time', now);
 
-  const [usersRes, resultsRes, accessRes] = await Promise.all([
+  const [usersRes, resultsRes, accessRes, historyRes] = await Promise.all([
     supabaseClient.from('users').select('*').order('id', { ascending: true }),
     supabaseClient.from('results').select('*').order('id', { ascending: false }),
-    supabaseClient.from('test_access').select('*').gte('end_time', now).order('id', { ascending: false })
+    supabaseClient.from('test_access').select('*').gte('end_time', now).order('id', { ascending: false }),
+    supabaseClient.from('login_history').select('*').order('login_time', { ascending: false }).limit(100) // Загружаем последние 100 авторизаций
   ]);
 
-  renderAdminPanel(usersRes.data || [], resultsRes.data || [], accessRes.data || []);
+  renderAdminPanel(usersRes.data || [], resultsRes.data || [], accessRes.data || [], historyRes.data || []);
 }
 
 function filterTableRows(rowClassName, selectedKey) {
@@ -554,7 +590,6 @@ function filterTableRows(rowClassName, selectedKey) {
 }
 
 function init() {
-  // Проверка на загрузку Supabase (если скрипт заблокирован в index.html)
   if (typeof supabase === 'undefined') {
       const loginScreen = document.getElementById('screen-login');
       if(loginScreen) {
@@ -580,5 +615,4 @@ function init() {
   renderLogin();
 }
 
-// Запускаем
 init();
