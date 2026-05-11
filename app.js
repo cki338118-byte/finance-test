@@ -36,14 +36,14 @@ const state = {
   score: 0,
   wrongQuestions: [],
   isRepeatMode: false,
+  qStates: {}, // Хранит состояние вопросов (избранное, правильность)
   
-  // Данные для админки
   adminQuestions: [],
   adminUsers: [],
   adminGroups: [],
   activeSubjectKey: null,
   editingQuestionId: null,
-  activeGroupManager: null // Для управления составом группы
+  activeGroupManager: null
 };
 
 const SESSION_LIMIT_MS = 5 * 60 * 60 * 1000;
@@ -55,8 +55,9 @@ function escapeHtml(value) {
   return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }
 
+// Теперь клонирование сохраняет ID вопроса для связи с БД
 function cloneQuestion(q) {
-  return { q: q.q, a: Array.isArray(q.a) ? [...q.a] : [], c: q.c };
+  return { id: q.id, q: q.q, a: Array.isArray(q.a) ? [...q.a] : [], c: q.c };
 }
 
 function shuffleArray(array) {
@@ -96,7 +97,8 @@ function saveTestProgress(isAnswered = false) {
     currentIndex: isAnswered ? state.currentIndex + 1 : state.currentIndex,
     score: state.score,
     wrongQuestions: state.wrongQuestions,
-    isRepeatMode: state.isRepeatMode
+    isRepeatMode: state.isRepeatMode,
+    qStates: state.qStates // Сохраняем состояния избранного и ошибок
   };
   localStorage.setItem('test_progress', JSON.stringify(progress));
 }
@@ -211,7 +213,7 @@ async function handleLogin() {
   const sessionToken = Math.random().toString(36).substring(2, 15);
   await supabaseClient.from('users').update({ session_token: sessionToken }).eq('id', data.id);
 
-  const deviceInfo = navigator.userAgent.substring(0, 50) + "..."; // Сохраняем краткую информацию вместо устройства
+  const deviceInfo = navigator.userAgent.substring(0, 50) + "...";
   await supabaseClient.from('login_history').insert([{ username: data.username, ip_address: userIP }]);
 
   const sessionData = { ...data, session_token: sessionToken, loginTimestamp: Date.now() };
@@ -272,8 +274,19 @@ async function renderSelection() {
 
   if (!data.length) html += `<div class="muted">Сейчас вам недоступны тесты</div>`;
   else {
-    html += `<div class="grid">`;
-    data.forEach(test => { html += `<button onclick="startTest('${test.test_key}')">${getTestTitle(test.test_key)}</button>`; });
+    html += `<div style="max-width:600px; margin:0 auto;">`;
+    data.forEach(test => { 
+        html += `
+        <div class="card" style="box-shadow:none; border:1px solid #d7dce3; margin-bottom:15px; text-align:left;">
+            <h3 style="margin-top:0; margin-bottom:12px;">${escapeHtml(getTestTitle(test.test_key))}</h3>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <button class="btn-ok" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'all')">▶️ Полный тест</button>
+                <button class="btn-bad" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'wrong')">❌ Работа над ошибками</button>
+                <button class="btn-gray" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'favorite')">⭐ Избранные</button>
+            </div>
+        </div>
+        `; 
+    });
     html += `</div>`;
   }
   screenSelection.innerHTML = html;
@@ -291,7 +304,7 @@ function renderQuizShell() {
     </div>
     <div id="counter"></div>
     <div class="progress"><div class="progress-bar" id="progress-bar"></div></div>
-    <div id="question"></div>
+    <div id="question" style="font-size:18px;"></div>
     <div id="options"></div>
     <button id="next-btn" class="hidden btn-ok" onclick="nextQuestion()">Следующий вопрос</button>
   `;
@@ -303,7 +316,7 @@ function renderResult() {
   const wrong = total - state.score;
   const percent = total ? Math.round((state.score / total) * 100) : 0;
 
-  let text = state.isRepeatMode ? 'Работа над ошибками (в базу не сохраняется).' : 'Результат сохранён.';
+  let text = state.isRepeatMode ? 'Тренировка завершена (в базу не сохраняется).' : 'Результат сохранён.';
   if (!state.isRepeatMode) {
     if (percent >= 90) text += ' Отличный результат.';
     else if (percent >= 60) text += ' проходной.';
@@ -342,7 +355,7 @@ function switchAdminTab(tabId) {
 }
 
 // ----------------------------------------------------
-// УПРАВЛЕНИЕ ГРУППАМИ И ПОЛЬЗОВАТЕЛЯМИ
+// ЛОГИКА АДМИНКИ (Группы и Вопросы)
 // ----------------------------------------------------
 
 async function createGroup() {
@@ -403,11 +416,6 @@ async function removeUserFromGroup(userId) {
     await supabaseClient.from('users').update({ group_name: 'Без группы' }).eq('id', userId);
     await openAdminPanel();
 }
-
-
-// ----------------------------------------------------
-// УПРАВЛЕНИЕ ВОПРОСАМИ
-// ----------------------------------------------------
 
 async function openSubjectManager(testKey) {
   state.activeSubjectKey = testKey;
@@ -552,30 +560,26 @@ window.saveQuestion = async function() {
   document.getElementById('question-form-container').innerHTML = '<h3>Сохранение...</h3>';
 
   if (state.editingQuestionId) {
-    const { error } = await supabaseClient.from('questions').update(payload).eq('id', state.editingQuestionId);
-    if (error) { alert('Ошибка сохранения'); console.error(error); }
+    await supabaseClient.from('questions').update(payload).eq('id', state.editingQuestionId);
   } else {
-    const { error } = await supabaseClient.from('questions').insert([payload]);
-    if (error) { alert('Ошибка создания'); console.error(error); }
+    await supabaseClient.from('questions').insert([payload]);
   }
-  
   openSubjectManager(state.activeSubjectKey);
 };
 
 window.deleteQuestion = async function(id) {
   if (!confirm('Точно удалить этот вопрос?')) return;
-  const { error } = await supabaseClient.from('questions').delete().eq('id', id);
-  if (error) { alert('Ошибка удаления'); console.error(error); }
-  else { openSubjectManager(state.activeSubjectKey); }
+  await supabaseClient.from('questions').delete().eq('id', id);
+  openSubjectManager(state.activeSubjectKey);
 };
 
 window.banIP = async function(ip) {
   if (!ip || ip === 'Скрыт/VPN') { alert('Невозможно заблокировать скрытый IP.'); return; }
   if (!confirm(`Точно заблокировать доступ для IP: ${ip} ?`)) return;
   
-  const { error } = await supabaseClient.from('banned_ips').insert([{ ip_address: ip }]);
-  if (error) { alert('Ошибка (возможно IP уже в бане)'); }
-  else { alert('IP успешно заблокирован!'); openAdminPanel(); }
+  await supabaseClient.from('banned_ips').insert([{ ip_address: ip }]);
+  alert('IP успешно заблокирован!'); 
+  openAdminPanel();
 };
 
 window.unbanIP = async function(id) {
@@ -584,7 +588,6 @@ window.unbanIP = async function(id) {
   openAdminPanel();
 };
 
-
 function renderAdminPanel(users = [], results = [], accesses = [], history = [], bannedIps = [], groups = []) {
   state.adminUsers = users;
   state.adminGroups = groups;
@@ -592,7 +595,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
   showScreen('screen-admin');
   const isSuperadmin = state.currentUser.role === 'superadmin';
 
-  // --- ВКЛАДКА ПРЕДМЕТЫ ---
   const subjectsGrid = Object.keys(TEST_TITLES).map(key => `
     <div class="card" style="box-shadow:none; border:1px solid #d7dce3; margin-top:10px; display:flex; justify-content:space-between; align-items:center; padding:15px;">
       <div>
@@ -603,7 +605,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
     </div>
   `).join('');
 
-  // --- ВКЛАДКА ПОЛЬЗОВАТЕЛИ (Группы + Пользователи) ---
   const groupsRows = groups.length ? groups.map(g => `
       <tr>
         <td>${escapeHtml(g.name)}</td>
@@ -614,7 +615,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
       </tr>
   `).join('') : `<tr><td colspan="2">Групп пока нет</td></tr>`;
 
-  // ФИЛЬТРУЕМ ПОЛЬЗОВАТЕЛЕЙ ДЛЯ ОБЫЧНОГО АДМИНА
   const visibleUsers = isSuperadmin 
     ? users 
     : users.filter(u => u.role === 'student' || u.username === state.currentUser.username);
@@ -642,7 +642,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
   
   const groupSelectOptions = `<option value="Без группы">Без группы</option>` + groups.map(g => `<option value="${escapeHtml(g.name)}">${escapeHtml(g.name)}</option>`).join('');
 
-  // --- ВКЛАДКА ЭКЗАМЕНЫ (ДОСТУПЫ) ---
   const accessRows = accesses.length ? accesses.map(row => `
       <tr class="access-row" data-filter-key="${row.test_key}">
         <td>${escapeHtml(row.username)}</td>
@@ -666,7 +665,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
       </tr>
     `}).join('') : `<tr><td colspan="6">Результатов пока нет</td></tr>`;
 
-  // ФИЛЬТРУЕМ ИСТОРИЮ ВХОДОВ
   const visibleHistory = isSuperadmin 
     ? history 
     : history.filter(h => {
@@ -743,16 +741,14 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
             <button class="btn-ok" style="margin-top: 15px;" onclick="createUser()">Создать</button>
           </div>
           
-          <h2>Список пользователей</h2>
+          <h2>Список всех пользователей</h2>
           <div class="table-wrap"><table><tr><th>ID</th><th>Логин</th><th>Пароль</th><th>Роль</th><th>Группа</th><th>Удалить</th></tr>${userRows}</table></div>
       </div>
 
       <div id="group-editor-view" class="hidden">
           <button class="btn-gray" style="margin-bottom:15px; width:auto; padding: 10px 20px;" onclick="closeGroupManager()">🔙 Назад</button>
           <h2 id="group-editor-title">Состав группы</h2>
-          
           <div id="group-members-list" class="table-wrap" style="margin-bottom:20px;"></div>
-          
           <div class="card" style="box-shadow:none; border:1px solid #d7dce3;">
               <h3 style="margin-top:0;">Добавить студента в группу</h3>
               <div style="display:flex; gap:10px;">
@@ -823,12 +819,8 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
   `;
   
   renderStudentsCheckboxes();
-
   switchAdminTab(currentAdminTab);
-  
-  if (state.activeGroupManager) {
-      openGroupManager(state.activeGroupManager);
-  }
+  if (state.activeGroupManager) openGroupManager(state.activeGroupManager);
 }
 
 window.toggleAccessMode = function() {
@@ -845,7 +837,6 @@ window.toggleAccessMode = function() {
 window.renderStudentsCheckboxes = function() {
   const container = document.getElementById('students-list');
   if (!container) return;
-
   const students = state.adminUsers.filter(u => u.role === 'student');
   let html = '';
   if (!students.length) { 
@@ -867,21 +858,85 @@ window.deselectAllCheckboxes = function() {
   document.querySelectorAll('.student-checkbox').forEach(cb => cb.checked = false);
 };
 
-async function startTest(testKey) {
-  document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px; text-align:center;">⏳ Загрузка вопросов...</h2>';
-  const { data, error } = await supabaseClient.from('questions').select('*').eq('test_key', testKey);
+// ----------------------------------------------------
+// ЛОГИКА ТЕСТА СТУДЕНТА (Избранное, Ошибки)
+// ----------------------------------------------------
 
-  if (error || !data || data.length === 0) { alert('Вопросы для этого предмета еще не добавлены в базу!'); renderSelection(); return; }
+async function startTest(testKey, mode) {
+  document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px; text-align:center;">⏳ Загрузка вопросов...</h2>';
+  
+  const { data: qData, error: qError } = await supabaseClient.from('questions').select('*').eq('test_key', testKey);
+  if (qError || !qData || qData.length === 0) { alert('Вопросы не найдены!'); renderSelection(); return; }
+  
+  // Скачиваем прогресс студента
+  const { data: sData } = await supabaseClient.from('student_q_state')
+     .select('*').eq('username', state.currentUser.username).eq('test_key', testKey);
+     
+  state.qStates = {};
+  (sData || []).forEach(row => {
+      state.qStates[row.question_id] = { is_correct: row.is_correct, is_favorite: row.is_favorite };
+  });
+
+  // Фильтруем вопросы в зависимости от того, какую кнопку нажал студент
+  let filteredQs = qData;
+  if (mode === 'wrong') {
+      filteredQs = qData.filter(q => {
+          const st = state.qStates[q.id];
+          return st && st.is_correct === false;
+      });
+      if (!filteredQs.length) { alert('Отличная работа! У вас нет ошибок в этом предмете. 🎉'); renderSelection(); return; }
+  } else if (mode === 'favorite') {
+      filteredQs = qData.filter(q => {
+          const st = state.qStates[q.id];
+          return st && st.is_favorite === true;
+      });
+      if (!filteredQs.length) { alert('Вы еще не добавили ни одного вопроса в избранное!'); renderSelection(); return; }
+  }
+
   state.currentTestKey = testKey;
-  state.questions = shuffleArray(data.map(cloneQuestion));
+  state.questions = shuffleArray(filteredQs.map(cloneQuestion));
   state.currentIndex = 0;
   state.score = 0;
   state.wrongQuestions = [];
-  state.isRepeatMode = false;
+  state.isRepeatMode = (mode !== 'all'); // Если тест не полный, баллы в общую таблицу не сохраняем
+  
   saveTestProgress(false); 
   renderQuizShell();
   loadQuestion();
 }
+
+window.toggleFavorite = function() {
+    const q = state.questions[state.currentIndex];
+    let st = state.qStates[q.id] || { is_correct: null, is_favorite: false };
+    st.is_favorite = !st.is_favorite; // Переключаем звездочку
+    state.qStates[q.id] = st;
+    
+    document.getElementById('btn-favorite').innerText = st.is_favorite ? '⭐' : '☆';
+    saveQState(q.id, st.is_correct, st.is_favorite);
+    saveTestProgress(); 
+};
+
+// Функция для невидимого сохранения каждого клика студента в БД
+window.saveQState = function(qId, isCorrect, isFavorite) {
+    supabaseClient.from('student_q_state').select('id, is_correct')
+        .eq('username', state.currentUser.username)
+        .eq('question_id', qId).single().then(({data}) => {
+        
+        const payload = { 
+            username: state.currentUser.username, 
+            test_key: state.currentTestKey, 
+            question_id: qId, 
+            is_correct: (isCorrect === null) ? (data ? data.is_correct : false) : isCorrect, 
+            is_favorite: !!isFavorite
+        };
+        
+        if (data) {
+            supabaseClient.from('student_q_state').update(payload).eq('id', data.id).then();
+        } else {
+            supabaseClient.from('student_q_state').insert([payload]).then();
+        }
+    });
+};
 
 function loadQuestion() {
   if (!state.questions.length) { finishQuiz(); return; }
@@ -889,11 +944,21 @@ function loadQuestion() {
 
   const q = state.questions[state.currentIndex];
   const total = state.questions.length;
+  const st = state.qStates[q.id] || { is_favorite: false };
 
   document.getElementById('quiz-title').innerText = getTestTitle(state.currentTestKey);
   document.getElementById('counter').innerText = `Вопрос ${state.currentIndex + 1} из ${total}`;
   document.getElementById('progress-bar').style.width = `${(state.currentIndex / total) * 100}%`;
-  document.getElementById('question').innerText = q.q;
+  
+  // Добавлена кнопка со звездочкой
+  document.getElementById('question').innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+          <div>${escapeHtml(q.q)}</div>
+          <button id="btn-favorite" onclick="toggleFavorite()" style="background:none; border:none; font-size:26px; cursor:pointer; padding:0; margin-left:15px; outline:none;" title="Добавить в избранное">
+              ${st.is_favorite ? '⭐' : '☆'}
+          </button>
+      </div>
+  `;
 
   const options = document.getElementById('options');
   options.innerHTML = '';
@@ -920,6 +985,13 @@ function selectAnswer(selectedBtn, isCorrect) {
     selectedBtn.classList.add('wrong');
     if (!state.isRepeatMode) state.wrongQuestions.push(cloneQuestion(state.questions[state.currentIndex]));
   } else state.score++;
+
+  // Перезаписываем данные о правильности ответа в базе
+  const qId = state.questions[state.currentIndex].id;
+  let st = state.qStates[qId] || { is_correct: null, is_favorite: false };
+  st.is_correct = isCorrect;
+  state.qStates[qId] = st;
+  saveQState(qId, isCorrect, st.is_favorite);
 
   saveTestProgress(true); 
   document.getElementById('next-btn').classList.remove('hidden');
@@ -1112,6 +1184,7 @@ function init() {
                   state.score = prog.score;
                   state.wrongQuestions = prog.wrongQuestions;
                   state.isRepeatMode = prog.isRepeatMode;
+                  state.qStates = prog.qStates || {};
 
                   if (state.currentIndex >= state.questions.length) {
                       finishQuiz();
