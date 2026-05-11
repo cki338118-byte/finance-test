@@ -36,7 +36,7 @@ const state = {
   score: 0,
   wrongQuestions: [],
   isRepeatMode: false,
-  qStates: {}, // Хранит состояние вопросов (избранное, правильность)
+  qStates: {},
   
   adminQuestions: [],
   adminUsers: [],
@@ -55,7 +55,6 @@ function escapeHtml(value) {
   return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }
 
-// Теперь клонирование сохраняет ID вопроса для связи с БД
 function cloneQuestion(q) {
   return { id: q.id, q: q.q, a: Array.isArray(q.a) ? [...q.a] : [], c: q.c };
 }
@@ -98,7 +97,7 @@ function saveTestProgress(isAnswered = false) {
     score: state.score,
     wrongQuestions: state.wrongQuestions,
     isRepeatMode: state.isRepeatMode,
-    qStates: state.qStates // Сохраняем состояния избранного и ошибок
+    qStates: state.qStates
   };
   localStorage.setItem('test_progress', JSON.stringify(progress));
 }
@@ -281,7 +280,7 @@ async function renderSelection() {
             <h3 style="margin-top:0; margin-bottom:12px;">${escapeHtml(getTestTitle(test.test_key))}</h3>
             <div style="display:flex; gap:10px; flex-wrap:wrap;">
                 <button class="btn-ok" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'all')">▶️ Полный тест</button>
-                <button class="btn-bad" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'wrong')">❌ Работа над ошибками</button>
+                <button class="btn-bad" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'wrong')">❌ Ошибки</button>
                 <button class="btn-gray" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'favorite')">⭐ Избранные</button>
             </div>
         </div>
@@ -292,13 +291,35 @@ async function renderSelection() {
   screenSelection.innerHTML = html;
 }
 
+// Новая функция: приостановка теста и выход
+window.pauseTest = async function() {
+    if (!confirm('Приостановить тест и вернуться в меню? Ваш прогресс будет сохранен.')) return;
+    
+    // Если это основной тест, сохраняем "Незавершенный" результат в БД
+    if (!state.isRepeatMode) {
+        document.getElementById('screen-quiz').innerHTML = '<h2 style="text-align:center; padding: 50px;">Сохранение...</h2>';
+        await saveResult('incomplete');
+    }
+    
+    state.currentTestKey = null;
+    state.questions = [];
+    state.currentIndex = 0;
+    state.score = 0;
+    
+    // Мы НЕ удаляем прогресс из localStorage, чтобы студент мог продолжить!
+    renderSelection();
+};
+
 function renderQuizShell() {
   showScreen('screen-quiz');
   screenQuiz.innerHTML = `
     <div class="screen-top">
-      <div class="left">
-        <h1 id="quiz-title" class="title-left">${escapeHtml(getTestTitle(state.currentTestKey))}</h1>
-        <div class="subtitle-left">Пользователь: ${escapeHtml(state.currentUser.username)}</div>
+      <div class="left" style="display:flex; align-items:center;">
+        <button class="btn-gray" style="padding:6px 12px; margin-right:15px; font-size:14px; width:auto;" onclick="pauseTest()">🔙 Назад</button>
+        <div>
+            <h1 id="quiz-title" class="title-left" style="margin:0;">${escapeHtml(getTestTitle(state.currentTestKey))}</h1>
+            <div class="subtitle-left">Пользователь: ${escapeHtml(state.currentUser.username)}</div>
+        </div>
       </div>
       <div class="right"><button class="btn-bad" onclick="logout()">🚪 Выйти</button></div>
     </div>
@@ -560,26 +581,30 @@ window.saveQuestion = async function() {
   document.getElementById('question-form-container').innerHTML = '<h3>Сохранение...</h3>';
 
   if (state.editingQuestionId) {
-    await supabaseClient.from('questions').update(payload).eq('id', state.editingQuestionId);
+    const { error } = await supabaseClient.from('questions').update(payload).eq('id', state.editingQuestionId);
+    if (error) { alert('Ошибка сохранения'); console.error(error); }
   } else {
-    await supabaseClient.from('questions').insert([payload]);
+    const { error } = await supabaseClient.from('questions').insert([payload]);
+    if (error) { alert('Ошибка создания'); console.error(error); }
   }
+  
   openSubjectManager(state.activeSubjectKey);
 };
 
 window.deleteQuestion = async function(id) {
   if (!confirm('Точно удалить этот вопрос?')) return;
-  await supabaseClient.from('questions').delete().eq('id', id);
-  openSubjectManager(state.activeSubjectKey);
+  const { error } = await supabaseClient.from('questions').delete().eq('id', id);
+  if (error) { alert('Ошибка удаления'); console.error(error); }
+  else { openSubjectManager(state.activeSubjectKey); }
 };
 
 window.banIP = async function(ip) {
   if (!ip || ip === 'Скрыт/VPN') { alert('Невозможно заблокировать скрытый IP.'); return; }
   if (!confirm(`Точно заблокировать доступ для IP: ${ip} ?`)) return;
   
-  await supabaseClient.from('banned_ips').insert([{ ip_address: ip }]);
-  alert('IP успешно заблокирован!'); 
-  openAdminPanel();
+  const { error } = await supabaseClient.from('banned_ips').insert([{ ip_address: ip }]);
+  if (error) { alert('Ошибка (возможно IP уже в бане)'); }
+  else { alert('IP успешно заблокирован!'); openAdminPanel(); }
 };
 
 window.unbanIP = async function(id) {
@@ -652,7 +677,11 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
       </tr>
     `).join('') : `<tr><td colspan="5">Нет активных доступов</td></tr>`;
 
-  const resultRows = results.length ? results.map(row => {
+  // Разделяем результаты на завершенные и незавершенные (прерванные)
+  const completedResults = results.filter(r => r.status !== 'incomplete');
+  const incompleteResults = results.filter(r => r.status === 'incomplete');
+
+  const resultRows = completedResults.length ? completedResults.map(row => {
       const testKey = Object.keys(TEST_TITLES).find(k => TEST_TITLES[k] === row.test_name) || 'unknown';
       return `
       <tr class="result-row" data-filter-key="${testKey}">
@@ -663,7 +692,19 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
         <td>${escapeHtml(row.percentage)}%</td>
         <td><button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteResult(${row.id})">❌</button></td>
       </tr>
-    `}).join('') : `<tr><td colspan="6">Результатов пока нет</td></tr>`;
+    `}).join('') : `<tr><td colspan="6">Завершенных результатов пока нет</td></tr>`;
+
+  const incompleteRows = incompleteResults.length ? incompleteResults.map(row => {
+      const testKey = Object.keys(TEST_TITLES).find(k => TEST_TITLES[k] === row.test_name) || 'unknown';
+      return `
+      <tr class="incomplete-row" data-filter-key="${testKey}">
+        <td>${escapeHtml(row.id)}</td>
+        <td>${escapeHtml(row.username)}</td>
+        <td>${escapeHtml(row.test_name)}</td>
+        <td>${escapeHtml(row.score)} (до выхода)</td>
+        <td><button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteResult(${row.id})">❌</button></td>
+      </tr>
+    `}).join('') : `<tr><td colspan="5">Незавершенных тестов нет</td></tr>`;
 
   const visibleHistory = isSuperadmin 
     ? history 
@@ -697,11 +738,12 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
       </div>
     </div>
     
-    <div class="admin-tabs">
+    <div class="admin-tabs" style="display:flex; flex-wrap:wrap;">
       <button id="btn-subjects" class="tab-btn" onclick="switchAdminTab('subjects')">Предметы</button>
       <button id="btn-students" class="tab-btn" onclick="switchAdminTab('students')">Пользователи</button>
-      <button id="btn-exams" class="tab-btn" onclick="switchAdminTab('exams')">Экзамены (Доступ)</button>
+      <button id="btn-exams" class="tab-btn" onclick="switchAdminTab('exams')">Экзамены</button>
       <button id="btn-results" class="tab-btn" onclick="switchAdminTab('results')">Результаты</button>
+      <button id="btn-incomplete" class="tab-btn" onclick="switchAdminTab('incomplete')">Незавершенные</button>
       <button id="btn-history" class="tab-btn" onclick="switchAdminTab('history')">История</button>
       ${isSuperadmin ? `<button id="btn-blacklist" class="tab-btn" style="color: red;" onclick="switchAdminTab('blacklist')">Бан-лист</button>` : ''}
     </div>
@@ -741,7 +783,7 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
             <button class="btn-ok" style="margin-top: 15px;" onclick="createUser()">Создать</button>
           </div>
           
-          <h2>Список всех пользователей</h2>
+          <h2>Список пользователей</h2>
           <div class="table-wrap"><table><tr><th>ID</th><th>Логин</th><th>Пароль</th><th>Роль</th><th>Группа</th><th>Удалить</th></tr>${userRows}</table></div>
       </div>
 
@@ -801,6 +843,15 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
       <div class="table-wrap"><table><tr><th>ID</th><th>Пользователь</th><th>Тест</th><th>Баллы</th><th>%</th><th>Удалить</th></tr>${resultRows}</table></div>
     </div>
 
+    <div id="tab-incomplete" class="tab-content admin-section">
+      <h2>Незавершенные тесты (Прерванные)</h2>
+      <div class="muted" style="margin-bottom:15px;">Здесь показаны тесты, из которых студент вышел с помощью кнопки "Назад".</div>
+      <select id="filter-incomplete" onchange="filterTableRows('incomplete-row', this.value)" style="margin-bottom: 15px;">
+        <option value="all">Все предметы</option>${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
+      </select>
+      <div class="table-wrap"><table><tr><th>ID</th><th>Пользователь</th><th>Тест</th><th>Баллы на момент выхода</th><th>Удалить</th></tr>${incompleteRows}</table></div>
+    </div>
+
     <div id="tab-history" class="tab-content admin-section">
       <h2>История авторизаций</h2>
       <select id="filter-history" onchange="filterTableRows('history-row', this.value)" style="margin-bottom: 15px;">
@@ -858,17 +909,12 @@ window.deselectAllCheckboxes = function() {
   document.querySelectorAll('.student-checkbox').forEach(cb => cb.checked = false);
 };
 
-// ----------------------------------------------------
-// ЛОГИКА ТЕСТА СТУДЕНТА (Избранное, Ошибки)
-// ----------------------------------------------------
-
 async function startTest(testKey, mode) {
   document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px; text-align:center;">⏳ Загрузка вопросов...</h2>';
   
   const { data: qData, error: qError } = await supabaseClient.from('questions').select('*').eq('test_key', testKey);
   if (qError || !qData || qData.length === 0) { alert('Вопросы не найдены!'); renderSelection(); return; }
   
-  // Скачиваем прогресс студента
   const { data: sData } = await supabaseClient.from('student_q_state')
      .select('*').eq('username', state.currentUser.username).eq('test_key', testKey);
      
@@ -877,7 +923,6 @@ async function startTest(testKey, mode) {
       state.qStates[row.question_id] = { is_correct: row.is_correct, is_favorite: row.is_favorite };
   });
 
-  // Фильтруем вопросы в зависимости от того, какую кнопку нажал студент
   let filteredQs = qData;
   if (mode === 'wrong') {
       filteredQs = qData.filter(q => {
@@ -898,7 +943,7 @@ async function startTest(testKey, mode) {
   state.currentIndex = 0;
   state.score = 0;
   state.wrongQuestions = [];
-  state.isRepeatMode = (mode !== 'all'); // Если тест не полный, баллы в общую таблицу не сохраняем
+  state.isRepeatMode = (mode !== 'all'); 
   
   saveTestProgress(false); 
   renderQuizShell();
@@ -908,15 +953,17 @@ async function startTest(testKey, mode) {
 window.toggleFavorite = function() {
     const q = state.questions[state.currentIndex];
     let st = state.qStates[q.id] || { is_correct: null, is_favorite: false };
-    st.is_favorite = !st.is_favorite; // Переключаем звездочку
+    st.is_favorite = !st.is_favorite; 
     state.qStates[q.id] = st;
     
-    document.getElementById('btn-favorite').innerText = st.is_favorite ? '⭐' : '☆';
+    const btn = document.getElementById('btn-favorite');
+    // Звезда: серая если пустая, золотая если добавлена
+    btn.style.color = st.is_favorite ? '#f59e0b' : '#cbd5e1';
+    
     saveQState(q.id, st.is_correct, st.is_favorite);
     saveTestProgress(); 
 };
 
-// Функция для невидимого сохранения каждого клика студента в БД
 window.saveQState = function(qId, isCorrect, isFavorite) {
     supabaseClient.from('student_q_state').select('id, is_correct')
         .eq('username', state.currentUser.username)
@@ -950,12 +997,12 @@ function loadQuestion() {
   document.getElementById('counter').innerText = `Вопрос ${state.currentIndex + 1} из ${total}`;
   document.getElementById('progress-bar').style.width = `${(state.currentIndex / total) * 100}%`;
   
-  // Добавлена кнопка со звездочкой
+  const starColor = st.is_favorite ? '#f59e0b' : '#cbd5e1';
   document.getElementById('question').innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:flex-start;">
           <div>${escapeHtml(q.q)}</div>
-          <button id="btn-favorite" onclick="toggleFavorite()" style="background:none; border:none; font-size:26px; cursor:pointer; padding:0; margin-left:15px; outline:none;" title="Добавить в избранное">
-              ${st.is_favorite ? '⭐' : '☆'}
+          <button id="btn-favorite" onclick="toggleFavorite()" style="background:none; border:none; font-size:28px; cursor:pointer; padding:0; margin-left:15px; outline:none; color:${starColor};" title="Добавить в избранное">
+              ★
           </button>
       </div>
   `;
@@ -986,7 +1033,6 @@ function selectAnswer(selectedBtn, isCorrect) {
     if (!state.isRepeatMode) state.wrongQuestions.push(cloneQuestion(state.questions[state.currentIndex]));
   } else state.score++;
 
-  // Перезаписываем данные о правильности ответа в базе
   const qId = state.questions[state.currentIndex].id;
   let st = state.qStates[qId] || { is_correct: null, is_favorite: false };
   st.is_correct = isCorrect;
@@ -1003,15 +1049,22 @@ function nextQuestion() {
   else finishQuiz();
 }
 
-async function saveResult() {
+async function saveResult(status = 'completed') {
   const total = state.questions.length || 1;
   const percentage = Number(((state.score / total) * 100).toFixed(2));
-  await supabaseClient.from('results').insert([{ username: state.currentUser.username, test_name: getTestTitle(state.currentTestKey), score: state.score, total: state.questions.length, percentage: percentage }]);
+  await supabaseClient.from('results').insert([{ 
+      username: state.currentUser.username, 
+      test_name: getTestTitle(state.currentTestKey), 
+      score: state.score, 
+      total: state.questions.length, 
+      percentage: percentage,
+      status: status
+  }]);
 }
 
 async function finishQuiz() {
   clearTestProgress(); 
-  if (!state.isRepeatMode) await saveResult();
+  if (!state.isRepeatMode) await saveResult('completed');
   renderResult();
 }
 
