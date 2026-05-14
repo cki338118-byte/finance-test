@@ -31,7 +31,7 @@ const TEST_TITLES = {
 const state = {
   currentUser: null,
   currentTestKey: null,
-  currentPartName: null, // Добавлена память о текущей части
+  currentPartName: null,
   questions: [],
   currentIndex: 0,
   score: 0,
@@ -250,7 +250,6 @@ async function renderSelection() {
   showScreen('screen-selection');
   const now = new Date().toISOString();
 
-  // 1. Получаем доступные тесты
   const { data, error } = await supabaseClient
     .from('test_access')
     .select('*')
@@ -281,7 +280,6 @@ async function renderSelection() {
       return;
   }
   
-  // 2. Ищем все существующие части (модули) для доступных предметов
   const testKeys = data.map(d => d.test_key);
   const { data: qData } = await supabaseClient.from('questions').select('test_key, part_name').in('test_key', testKeys);
   
@@ -298,7 +296,6 @@ async function renderSelection() {
   data.forEach(test => { 
       const parts = Array.from(partsMap[test.test_key] || ['Основная часть']);
       
-      // Создаем зеленую кнопку для КАЖДОЙ части
       let partsButtons = parts.map(p => 
           `<button class="btn-ok" style="margin:0; margin-bottom:5px; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'part', '${escapeHtml(p)}')">▶️ ${escapeHtml(p)}</button>`
       ).join(' ');
@@ -568,6 +565,53 @@ window.deleteSelectedQuestions = async function() {
     openSubjectManager(state.activeSubjectKey);
 };
 
+// --- НОВАЯ ФУНКЦИЯ ДЛЯ МАССОВОГО РАЗДЕЛЕНИЯ ВОПРОСОВ НА ЧАСТИ ---
+window.splitQuestionsIntoParts = async function() {
+    if (state.adminQuestions.length === 0) {
+        return alert("В этом предмете нет вопросов для разделения.");
+    }
+
+    const numPartsStr = prompt(`У вас ${state.adminQuestions.length} вопросов.\nНа сколько равных частей вы хотите их разделить? (введите число, например, 3)`);
+    if (!numPartsStr) return;
+
+    const numParts = parseInt(numPartsStr, 10);
+    if (isNaN(numParts) || numParts < 2) {
+        return alert("Пожалуйста, введите число больше 1.");
+    }
+
+    if (numParts > state.adminQuestions.length) {
+        return alert("Количество частей не может быть больше количества вопросов!");
+    }
+
+    document.getElementById('questions-list-render').innerHTML = '<h2 style="text-align:center; padding: 50px;">⏳ Разделение на части...</h2>';
+
+    const chunkSize = Math.ceil(state.adminQuestions.length / numParts);
+    
+    // Подготавливаем запросы на обновление
+    const promises = state.adminQuestions.map((q, index) => {
+        const partNum = Math.floor(index / chunkSize) + 1;
+        const newPartName = `Часть ${partNum}`;
+        
+        // Обновляем только те, у которых имя отличается
+        if (q.part_name !== newPartName) {
+            return supabaseClient.from('questions').update({ part_name: newPartName }).eq('id', q.id);
+        }
+        return Promise.resolve();
+    });
+
+    try {
+        await Promise.all(promises);
+        alert(`Все вопросы успешно разделены на ${numParts} частей!`);
+    } catch (e) {
+        console.error(e);
+        alert('Произошла ошибка при разделении.');
+    }
+
+    // Обновляем список вопросов
+    openSubjectManager(state.activeSubjectKey);
+};
+
+
 function renderSubjectQuestionsList() {
   const isSuperadmin = state.currentUser.role === 'superadmin';
   document.getElementById('subject-editor-title').innerText = `Вопросы: ${getTestTitle(state.activeSubjectKey)} (${state.adminQuestions.length})`;
@@ -585,6 +629,7 @@ function renderSubjectQuestionsList() {
       
       <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
           <button class="btn-primary" style="margin:0; width:auto; padding:10px 20px;" onclick="openQuestionEditor(null)">+ Создать 1 вопрос вручную</button>
+          <button class="btn-gray" style="margin:0; width:auto; padding:10px 20px; border: 1px solid #000;" onclick="splitQuestionsIntoParts()">✂️ Разделить на части</button>
           <button class="btn-bad" style="margin:0; width:auto; padding:10px 20px;" onclick="deleteSelectedQuestions()">🗑 Удалить выбранные</button>
           
           <label style="cursor:pointer; display:flex; align-items:center; gap:8px; margin-left: auto; font-size:14px; background: #f1f5f9; padding: 8px 15px; border-radius: 8px; border: 1px solid #cbd5e1;">
@@ -820,7 +865,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
   const incompleteResults = results.filter(r => r.status === 'incomplete');
 
   const resultRows = completedResults.length ? completedResults.map(row => {
-      // Ищем базовый ключ предмета, отбрасывая название части в скобках
       const baseNameMatch = row.test_name.match(/^(.*?) \(/);
       const baseName = baseNameMatch ? baseNameMatch[1] : row.test_name;
       const testKey = Object.keys(TEST_TITLES).find(k => TEST_TITLES[k] === baseName) || 'unknown';
@@ -1087,7 +1131,7 @@ async function startTest(testKey, mode, partName = null) {
   }
 
   state.currentTestKey = testKey;
-  state.currentPartName = partName; // Запоминаем текущую часть
+  state.currentPartName = partName; 
   state.questions = shuffleArray(filteredQs.map(cloneQuestion));
   state.currentIndex = 0;
   state.score = 0;
@@ -1202,7 +1246,6 @@ async function saveResult(status = 'completed') {
   const total = state.questions.length || 1;
   const percentage = Number(((state.score / total) * 100).toFixed(2));
   
-  // К названию теста добавляем название части (если это не базовая "Основная часть")
   let testName = getTestTitle(state.currentTestKey);
   if (state.currentPartName && state.currentPartName !== 'Основная часть') {
       testName += ` (${state.currentPartName})`;
