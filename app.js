@@ -31,6 +31,7 @@ const TEST_TITLES = {
 const state = {
   currentUser: null,
   currentTestKey: null,
+  currentPartName: null, // Добавлена память о текущей части
   questions: [],
   currentIndex: 0,
   score: 0,
@@ -57,7 +58,7 @@ function escapeHtml(value) {
 }
 
 function cloneQuestion(q) {
-  return { id: q.id, q: q.q, a: Array.isArray(q.a) ? [...q.a] : [], c: q.c };
+  return { id: q.id, q: q.q, a: Array.isArray(q.a) ? [...q.a] : [], c: q.c, part_name: q.part_name };
 }
 
 function shuffleArray(array) {
@@ -93,6 +94,7 @@ function saveTestProgress(isAnswered = false) {
   if (!state.currentTestKey) return;
   const progress = {
     currentTestKey: state.currentTestKey,
+    currentPartName: state.currentPartName,
     questions: state.questions,
     currentIndex: isAnswered ? state.currentIndex + 1 : state.currentIndex,
     score: state.score,
@@ -248,6 +250,7 @@ async function renderSelection() {
   showScreen('screen-selection');
   const now = new Date().toISOString();
 
+  // 1. Получаем доступные тесты
   const { data, error } = await supabaseClient
     .from('test_access')
     .select('*')
@@ -272,23 +275,49 @@ async function renderSelection() {
     </div>
   `;
 
-  if (!data.length) html += `<div class="muted">Сейчас вам недоступны тесты</div>`;
-  else {
-    html += `<div style="max-width:600px; margin:0 auto;">`;
-    data.forEach(test => { 
-        html += `
-        <div class="card" style="box-shadow:none; border:1px solid #d7dce3; margin-bottom:15px; text-align:left;">
-            <h3 style="margin-top:0; margin-bottom:12px;">${escapeHtml(getTestTitle(test.test_key))}</h3>
-            <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                <button class="btn-ok" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'all')">▶️ Полностью</button>
-                <button class="btn-bad" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'wrong')">❌ Ошибки</button>
-                <button class="btn-gray" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'favorite')">⭐ Избранные</button>
-            </div>
-        </div>
-        `; 
-    });
-    html += `</div>`;
+  if (!data.length) {
+      html += `<div class="muted">Сейчас вам недоступны тесты</div>`;
+      screenSelection.innerHTML = html;
+      return;
   }
+  
+  // 2. Ищем все существующие части (модули) для доступных предметов
+  const testKeys = data.map(d => d.test_key);
+  const { data: qData } = await supabaseClient.from('questions').select('test_key, part_name').in('test_key', testKeys);
+  
+  const partsMap = {};
+  testKeys.forEach(k => partsMap[k] = new Set());
+  
+  if (qData) {
+      qData.forEach(q => {
+          partsMap[q.test_key].add(q.part_name || 'Основная часть');
+      });
+  }
+
+  html += `<div style="max-width:600px; margin:0 auto;">`;
+  data.forEach(test => { 
+      const parts = Array.from(partsMap[test.test_key] || ['Основная часть']);
+      
+      // Создаем зеленую кнопку для КАЖДОЙ части
+      let partsButtons = parts.map(p => 
+          `<button class="btn-ok" style="margin:0; margin-bottom:5px; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'part', '${escapeHtml(p)}')">▶️ ${escapeHtml(p)}</button>`
+      ).join(' ');
+
+      html += `
+      <div class="card" style="box-shadow:none; border:1px solid #d7dce3; margin-bottom:15px; text-align:left;">
+          <h3 style="margin-top:0; margin-bottom:12px;">${escapeHtml(getTestTitle(test.test_key))}</h3>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom: 10px;">
+              ${partsButtons}
+          </div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; border-top: 1px solid #eee; padding-top: 10px;">
+              <button class="btn-bad" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'wrong')">❌ Работа над ошибками</button>
+              <button class="btn-gray" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'favorite')">⭐ Избранные</button>
+          </div>
+      </div>
+      `; 
+  });
+  html += `</div>`;
+  
   screenSelection.innerHTML = html;
 }
 
@@ -301,6 +330,7 @@ window.pauseTest = async function() {
     }
     
     state.currentTestKey = null;
+    state.currentPartName = null;
     state.questions = [];
     state.currentIndex = 0;
     state.score = 0;
@@ -315,7 +345,10 @@ function renderQuizShell() {
       <div class="left" style="display:flex; align-items:center;">
         <button class="btn-gray" style="padding:6px 12px; margin-right:15px; font-size:14px; width:auto;" onclick="pauseTest()">🔙 Назад</button>
         <div>
-            <h1 id="quiz-title" class="title-left" style="margin:0;">${escapeHtml(getTestTitle(state.currentTestKey))}</h1>
+            <h1 id="quiz-title" class="title-left" style="margin:0;">
+                ${escapeHtml(getTestTitle(state.currentTestKey))}
+                ${state.currentPartName ? `<span style="font-size:16px; color:#888;">(${escapeHtml(state.currentPartName)})</span>` : ''}
+            </h1>
             <div class="subtitle-left">Пользователь: ${escapeHtml(state.currentUser.username)}</div>
         </div>
       </div>
@@ -453,6 +486,8 @@ function closeSubjectManager() {
 
 window.parseAndImportQuestions = async function() {
     const text = document.getElementById('import-text').value;
+    const partName = document.getElementById('import-part-name').value.trim() || 'Основная часть';
+    
     if (!text) return alert('Вставьте текст с вопросами!');
     
     document.getElementById('import-btn').innerText = 'Импорт...';
@@ -483,7 +518,7 @@ window.parseAndImportQuestions = async function() {
         }
         
         if (options.length > 0) {
-            questionsToInsert.push({ test_key: state.activeSubjectKey, q: qText, a: options, c: correctIdx });
+            questionsToInsert.push({ test_key: state.activeSubjectKey, part_name: partName, q: qText, a: options, c: correctIdx });
         }
     }
     
@@ -500,7 +535,7 @@ window.parseAndImportQuestions = async function() {
         alert('Ошибка при импорте в базу данных');
         console.error(error);
     } else {
-        alert(`Успешно импортировано ${questionsToInsert.length} вопросов!`);
+        alert(`Успешно импортировано ${questionsToInsert.length} вопросов в раздел "${partName}"!`);
         document.getElementById('import-text').value = '';
         openSubjectManager(state.activeSubjectKey);
     }
@@ -543,6 +578,7 @@ function renderSubjectQuestionsList() {
       <div class="card" style="box-shadow:none; border:2px dashed #d7dce3; margin-bottom:20px; background:#f8fafc;">
           <h3 style="margin-top:0;">⚡ Быстрый импорт вопросов</h3>
           <div class="muted" style="margin-bottom:10px; font-size:12px;">Вставьте текст. Каждый вопрос должен начинаться с <b>+++++</b>, а варианты ответов с <b>====</b>. Правильный ответ помечается как <b>====#</b></div>
+          <input id="import-part-name" type="text" placeholder="Название части (по умолчанию: Основная часть)" value="Основная часть" style="width:100%; padding:8px; border-radius:8px; border:1px solid #ccc; margin-bottom:10px; font-family:inherit;">
           <textarea id="import-text" style="width:100%; height:100px; padding:10px; border-radius:8px; border:1px solid #ccc; font-family:monospace;" placeholder="+++++ Вопрос 1...\n==== Неверный\n====# Верный..."></textarea>
           <button id="import-btn" class="btn-ok" style="margin-top:10px; width:auto; padding:8px 20px;" onclick="parseAndImportQuestions()">Импортировать вопросы</button>
       </div>
@@ -564,11 +600,12 @@ function renderSubjectQuestionsList() {
   } else {
     state.adminQuestions.forEach((q, index) => {
       let answersHtml = q.a.map((ans, i) => `<div style="font-size:14px; margin-top:4px; ${i === q.c ? 'color:green; font-weight:bold;' : 'color:#555;'}">${i === q.c ? '✅' : '➖'} ${escapeHtml(ans)}</div>`).join('');
-      
+      let partBadge = q.part_name && q.part_name !== 'Основная часть' ? `<span style="background:#e2e8f0; padding:2px 6px; border-radius:4px; font-size:12px; color:#475569; margin-bottom:8px; display:inline-block;">Модуль: ${escapeHtml(q.part_name)}</span>` : '';
+
       html += `
         <div class="card" style="margin-top: 10px; padding: 15px; box-shadow: none; border: 1px solid #d7dce3; position: relative;">
           ${isSuperadmin ? `<input type="checkbox" class="question-checkbox" value="${q.id}" style="position: absolute; top: 15px; right: 15px; width: 18px; height: 18px; cursor: pointer;">` : ''}
-          
+          ${partBadge}
           <div style="font-weight: bold; font-size: 16px; margin-bottom: 8px; padding-right: 30px;">${index + 1}. ${escapeHtml(q.q)}</div>
           <div>${answersHtml}</div>
           ${isSuperadmin ? `
@@ -596,6 +633,7 @@ function openQuestionEditor(id) {
   let qText = '';
   let answers = ['', ''];
   let correctIdx = 0;
+  let qPart = 'Основная часть';
 
   if (id) {
     const qObj = state.adminQuestions.find(q => q.id === id);
@@ -603,12 +641,17 @@ function openQuestionEditor(id) {
       qText = qObj.q;
       answers = [...qObj.a];
       correctIdx = qObj.c;
+      qPart = qObj.part_name || 'Основная часть';
     }
   }
 
   formContainer.innerHTML = `
     <div class="card" style="box-shadow: none; border: 2px solid var(--primary); margin-top:0;">
       <h3 style="margin-top:0;">${id ? 'Редактирование вопроса' : 'Новый вопрос'}</h3>
+      
+      <label><strong>Часть/Модуль:</strong></label>
+      <input id="edit-q-part" type="text" value="${escapeHtml(qPart)}" style="width:100%; padding:8px; margin-top:5px; margin-bottom:15px; border-radius:8px; border:1px solid #ccc; font-family:inherit;">
+
       <label><strong>Текст вопроса:</strong></label>
       <textarea id="edit-q-text" style="width:100%; height:80px; padding:10px; margin-top:5px; border-radius:8px; border:1px solid #ccc; font-family:inherit;">${escapeHtml(qText)}</textarea>
       
@@ -658,6 +701,7 @@ window.cancelQuestionEdit = function() {
 };
 
 window.saveQuestion = async function() {
+  const qPart = document.getElementById('edit-q-part').value.trim() || 'Основная часть';
   const qText = document.getElementById('edit-q-text').value.trim();
   const inputs = document.querySelectorAll('.edit-ans-input');
   const answers = Array.from(inputs).map(inp => inp.value.trim());
@@ -667,6 +711,7 @@ window.saveQuestion = async function() {
 
   const payload = {
     test_key: state.activeSubjectKey,
+    part_name: qPart,
     q: qText,
     a: answers,
     c: window._tempCorrect
@@ -775,7 +820,11 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
   const incompleteResults = results.filter(r => r.status === 'incomplete');
 
   const resultRows = completedResults.length ? completedResults.map(row => {
-      const testKey = Object.keys(TEST_TITLES).find(k => TEST_TITLES[k] === row.test_name) || 'unknown';
+      // Ищем базовый ключ предмета, отбрасывая название части в скобках
+      const baseNameMatch = row.test_name.match(/^(.*?) \(/);
+      const baseName = baseNameMatch ? baseNameMatch[1] : row.test_name;
+      const testKey = Object.keys(TEST_TITLES).find(k => TEST_TITLES[k] === baseName) || 'unknown';
+      
       return `
       <tr class="result-row" data-filter-key="${testKey}">
         <td>${escapeHtml(row.id)}</td>
@@ -788,7 +837,10 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
     `}).join('') : `<tr><td colspan="6">Завершенных результатов пока нет</td></tr>`;
 
   const incompleteRows = incompleteResults.length ? incompleteResults.map(row => {
-      const testKey = Object.keys(TEST_TITLES).find(k => TEST_TITLES[k] === row.test_name) || 'unknown';
+      const baseNameMatch = row.test_name.match(/^(.*?) \(/);
+      const baseName = baseNameMatch ? baseNameMatch[1] : row.test_name;
+      const testKey = Object.keys(TEST_TITLES).find(k => TEST_TITLES[k] === baseName) || 'unknown';
+      
       return `
       <tr class="incomplete-row" data-filter-key="${testKey}">
         <td>${escapeHtml(row.id)}</td>
@@ -1002,7 +1054,7 @@ window.deselectAllCheckboxes = function() {
   document.querySelectorAll('.student-checkbox').forEach(cb => cb.checked = false);
 };
 
-async function startTest(testKey, mode) {
+async function startTest(testKey, mode, partName = null) {
   document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px; text-align:center;">⏳ Загрузка вопросов...</h2>';
   
   const { data: qData, error: qError } = await supabaseClient.from('questions').select('*').eq('test_key', testKey);
@@ -1017,7 +1069,10 @@ async function startTest(testKey, mode) {
   });
 
   let filteredQs = qData;
-  if (mode === 'wrong') {
+  if (mode === 'part' && partName) {
+      filteredQs = qData.filter(q => (q.part_name || 'Основная часть') === partName);
+      if (!filteredQs.length) { alert('В этой части нет вопросов!'); renderSelection(); return; }
+  } else if (mode === 'wrong') {
       filteredQs = qData.filter(q => {
           const st = state.qStates[q.id];
           return st && st.is_correct === false;
@@ -1032,11 +1087,12 @@ async function startTest(testKey, mode) {
   }
 
   state.currentTestKey = testKey;
+  state.currentPartName = partName; // Запоминаем текущую часть
   state.questions = shuffleArray(filteredQs.map(cloneQuestion));
   state.currentIndex = 0;
   state.score = 0;
   state.wrongQuestions = [];
-  state.isRepeatMode = (mode !== 'all'); 
+  state.isRepeatMode = (mode !== 'part'); 
   
   saveTestProgress(false); 
   renderQuizShell();
@@ -1083,6 +1139,10 @@ function loadQuestion() {
   const st = state.qStates[q.id] || { is_favorite: false };
 
   document.getElementById('quiz-title').innerText = getTestTitle(state.currentTestKey);
+  if (state.currentPartName && state.currentPartName !== 'Основная часть') {
+      document.getElementById('quiz-title').innerHTML += ` <span style="font-size:16px; color:#888;">(${escapeHtml(state.currentPartName)})</span>`;
+  }
+  
   document.getElementById('counter').innerText = `Вопрос ${state.currentIndex + 1} из ${total}`;
   document.getElementById('progress-bar').style.width = `${(state.currentIndex / total) * 100}%`;
   
@@ -1141,9 +1201,16 @@ function nextQuestion() {
 async function saveResult(status = 'completed') {
   const total = state.questions.length || 1;
   const percentage = Number(((state.score / total) * 100).toFixed(2));
+  
+  // К названию теста добавляем название части (если это не базовая "Основная часть")
+  let testName = getTestTitle(state.currentTestKey);
+  if (state.currentPartName && state.currentPartName !== 'Основная часть') {
+      testName += ` (${state.currentPartName})`;
+  }
+
   await supabaseClient.from('results').insert([{ 
       username: state.currentUser.username, 
-      test_name: getTestTitle(state.currentTestKey), 
+      test_name: testName, 
       score: state.score, 
       total: state.questions.length, 
       percentage: percentage,
@@ -1169,6 +1236,7 @@ function repeatWrong() {
 
 function backToSelection() {
   state.currentTestKey = null;
+  state.currentPartName = null;
   state.questions = [];
   state.currentIndex = 0;
   state.score = 0;
@@ -1183,6 +1251,7 @@ function logout(force = false) {
   clearTestProgress();
   state.currentUser = null;
   state.currentTestKey = null;
+  state.currentPartName = null;
   state.questions = [];
   state.currentIndex = 0;
   state.score = 0;
@@ -1321,6 +1390,7 @@ function init() {
               try {
                   const prog = JSON.parse(savedProgressStr);
                   state.currentTestKey = prog.currentTestKey;
+                  state.currentPartName = prog.currentPartName || null;
                   state.questions = prog.questions;
                   state.currentIndex = prog.currentIndex;
                   state.score = prog.score;
