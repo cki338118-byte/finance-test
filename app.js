@@ -296,9 +296,15 @@ async function renderSelection() {
   data.forEach(test => { 
       const parts = Array.from(partsMap[test.test_key] || ['Основная часть']);
       
-      let partsButtons = parts.map(p => 
-          `<button class="btn-ok" style="margin:0; margin-bottom:5px; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'part', '${escapeHtml(p)}')">▶️ ${escapeHtml(p)}</button>`
-      ).join(' ');
+      // Добавили кнопку "Полный тест", которая всегда отображается первой
+      let partsButtons = `<button class="btn-ok" style="margin:0; margin-bottom:5px; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'all')">▶️ Полный тест</button>`;
+      
+      // Если есть разделение, добавляем кнопки частей
+      if (parts.length > 1 || (parts.length === 1 && parts[0] !== 'Основная часть')) {
+          partsButtons += ' ' + parts.map(p => 
+              `<button class="btn-primary" style="margin:0; margin-bottom:5px; width:auto; padding:8px 15px; font-size:13px; background:#3b82f6;" onclick="startTest('${test.test_key}', 'part', '${escapeHtml(p)}')">▶️ ${escapeHtml(p)}</button>`
+          ).join(' ');
+      }
 
       html += `
       <div class="card" style="box-shadow:none; border:1px solid #d7dce3; margin-bottom:15px; text-align:left;">
@@ -307,7 +313,7 @@ async function renderSelection() {
               ${partsButtons}
           </div>
           <div style="display:flex; gap:10px; flex-wrap:wrap; border-top: 1px solid #eee; padding-top: 10px;">
-              <button class="btn-bad" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'wrong')">❌ Работа над ошибками</button>
+              <button class="btn-bad" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'wrong')">❌ Ошибки</button>
               <button class="btn-gray" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'favorite')">⭐ Избранные</button>
           </div>
       </div>
@@ -565,7 +571,6 @@ window.deleteSelectedQuestions = async function() {
     openSubjectManager(state.activeSubjectKey);
 };
 
-// --- НОВАЯ ФУНКЦИЯ ДЛЯ МАССОВОГО РАЗДЕЛЕНИЯ ВОПРОСОВ НА ЧАСТИ ---
 window.splitQuestionsIntoParts = async function() {
     if (state.adminQuestions.length === 0) {
         return alert("В этом предмете нет вопросов для разделения.");
@@ -587,12 +592,10 @@ window.splitQuestionsIntoParts = async function() {
 
     const chunkSize = Math.ceil(state.adminQuestions.length / numParts);
     
-    // Подготавливаем запросы на обновление
     const promises = state.adminQuestions.map((q, index) => {
         const partNum = Math.floor(index / chunkSize) + 1;
         const newPartName = `Часть ${partNum}`;
         
-        // Обновляем только те, у которых имя отличается
         if (q.part_name !== newPartName) {
             return supabaseClient.from('questions').update({ part_name: newPartName }).eq('id', q.id);
         }
@@ -607,7 +610,6 @@ window.splitQuestionsIntoParts = async function() {
         alert('Произошла ошибка при разделении.');
     }
 
-    // Обновляем список вопросов
     openSubjectManager(state.activeSubjectKey);
 };
 
@@ -1136,7 +1138,7 @@ async function startTest(testKey, mode, partName = null) {
   state.currentIndex = 0;
   state.score = 0;
   state.wrongQuestions = [];
-  state.isRepeatMode = (mode !== 'part'); 
+  state.isRepeatMode = (mode !== 'part' && mode !== 'all'); 
   
   saveTestProgress(false); 
   renderQuizShell();
