@@ -36,7 +36,8 @@ const state = {
   score: 0,
   wrongQuestions: [],
   isRepeatMode: false,
-  qStates: {},
+  
+  qStates: {}, // Память о вопросах: { question_id: { id, is_correct, is_favorite } }
   
   adminQuestions: [],
   adminUsers: [],
@@ -49,7 +50,7 @@ const state = {
 const SESSION_LIMIT_MS = 5 * 60 * 60 * 1000;
 let sessionCheckInterval = null;
 let isLoggingIn = false;
-let allStudentsCache = [];
+let allStudentsCache = []; 
 
 function escapeHtml(value) {
   return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
@@ -212,7 +213,6 @@ async function handleLogin() {
   const sessionToken = Math.random().toString(36).substring(2, 15);
   await supabaseClient.from('users').update({ session_token: sessionToken }).eq('id', data.id);
 
-  const deviceInfo = navigator.userAgent.substring(0, 50) + "...";
   await supabaseClient.from('login_history').insert([{ username: data.username, ip_address: userIP }]);
 
   const sessionData = { ...data, session_token: sessionToken, loginTimestamp: Date.now() };
@@ -279,7 +279,7 @@ async function renderSelection() {
         <div class="card" style="box-shadow:none; border:1px solid #d7dce3; margin-bottom:15px; text-align:left;">
             <h3 style="margin-top:0; margin-bottom:12px;">${escapeHtml(getTestTitle(test.test_key))}</h3>
             <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                <button class="btn-ok" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'all')">▶️ Полный тест</button>
+                <button class="btn-ok" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'all')">▶️ Полностью</button>
                 <button class="btn-bad" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'wrong')">❌ Ошибки</button>
                 <button class="btn-gray" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'favorite')">⭐ Избранные</button>
             </div>
@@ -291,11 +291,9 @@ async function renderSelection() {
   screenSelection.innerHTML = html;
 }
 
-// Новая функция: приостановка теста и выход
 window.pauseTest = async function() {
     if (!confirm('Приостановить тест и вернуться в меню? Ваш прогресс будет сохранен.')) return;
     
-    // Если это основной тест, сохраняем "Незавершенный" результат в БД
     if (!state.isRepeatMode) {
         document.getElementById('screen-quiz').innerHTML = '<h2 style="text-align:center; padding: 50px;">Сохранение...</h2>';
         await saveResult('incomplete');
@@ -306,7 +304,6 @@ window.pauseTest = async function() {
     state.currentIndex = 0;
     state.score = 0;
     
-    // Мы НЕ удаляем прогресс из localStorage, чтобы студент мог продолжить!
     renderSelection();
 };
 
@@ -358,7 +355,6 @@ function renderResult() {
     <div class="muted">${escapeHtml(text)}</div>
     <div class="toolbar">
       <button class="btn-gray" onclick="backToSelection()">К выбору тестов</button>
-      ${state.wrongQuestions.length > 0 && !state.isRepeatMode ? `<button class="btn-ok" onclick="repeatWrong()">Повторить ошибки (${state.wrongQuestions.length})</button>` : ''}
     </div>
   `;
 }
@@ -458,17 +454,82 @@ function closeSubjectManager() {
   document.getElementById('subjects-list-container').classList.remove('hidden');
 }
 
+// ПАРСЕР И ИМПОРТ ВОПРОСОВ ИЗ ТЕКСТА
+window.parseAndImportQuestions = async function() {
+    const text = document.getElementById('import-text').value;
+    if (!text) return alert('Вставьте текст с вопросами!');
+    
+    document.getElementById('import-btn').innerText = 'Импорт...';
+    document.getElementById('import-btn').disabled = true;
+
+    const blocks = text.split('+++++').filter(b => b.trim());
+    const questionsToInsert = [];
+    
+    for (let block of blocks) {
+        const firstSeparatorIdx = block.search(/====/);
+        if (firstSeparatorIdx === -1) continue;
+        
+        const qText = block.substring(0, firstSeparatorIdx).trim();
+        const optionsString = block.substring(firstSeparatorIdx);
+        
+        const optionParts = optionsString.split('====').filter(o => o.trim());
+        const options = [];
+        let correctIdx = 0;
+        
+        for (let i = 0; i < optionParts.length; i++) {
+            let part = optionParts[i].trim();
+            if (part.startsWith('#')) {
+                correctIdx = i;
+                options.push(part.substring(1).trim());
+            } else {
+                options.push(part);
+            }
+        }
+        
+        if (options.length > 0) {
+            questionsToInsert.push({ test_key: state.activeSubjectKey, q: qText, a: options, c: correctIdx });
+        }
+    }
+    
+    if (!questionsToInsert.length) {
+        alert('Вопросы не распознаны. Проверьте правильность расстановки +++++ и ====');
+        document.getElementById('import-btn').innerText = 'Импортировать вопросы';
+        document.getElementById('import-btn').disabled = false;
+        return;
+    }
+
+    const { error } = await supabaseClient.from('questions').insert(questionsToInsert);
+    
+    if (error) {
+        alert('Ошибка при импорте в базу данных');
+        console.error(error);
+    } else {
+        alert(`Успешно импортировано ${questionsToInsert.length} вопросов!`);
+        document.getElementById('import-text').value = '';
+        openSubjectManager(state.activeSubjectKey);
+    }
+};
+
 function renderSubjectQuestionsList() {
   const isSuperadmin = state.currentUser.role === 'superadmin';
   document.getElementById('subject-editor-title').innerText = `Вопросы: ${getTestTitle(state.activeSubjectKey)} (${state.adminQuestions.length})`;
   
   let html = '';
   if (isSuperadmin) {
-    html += `<button class="btn-ok" style="margin-bottom: 15px;" onclick="openQuestionEditor(null)">+ Создать новый вопрос</button>`;
+    // Инструмент массового импорта
+    html += `
+      <div class="card" style="box-shadow:none; border:2px dashed #d7dce3; margin-bottom:20px; background:#f8fafc;">
+          <h3 style="margin-top:0;">⚡ Быстрый импорт вопросов</h3>
+          <div class="muted" style="margin-bottom:10px; font-size:12px;">Вставьте текст. Каждый вопрос должен начинаться с <b>+++++</b>, а варианты ответов с <b>====</b>. Правильный ответ помечается как <b>====#</b></div>
+          <textarea id="import-text" style="width:100%; height:100px; padding:10px; border-radius:8px; border:1px solid #ccc; font-family:monospace;" placeholder="+++++ Вопрос 1...\n==== Неверный\n====# Верный..."></textarea>
+          <button id="import-btn" class="btn-ok" style="margin-top:10px; width:auto; padding:8px 20px;" onclick="parseAndImportQuestions()">Импортировать вопросы</button>
+      </div>
+    `;
+    html += `<button class="btn-primary" style="margin-bottom: 15px; width:auto; padding:10px 20px;" onclick="openQuestionEditor(null)">+ Создать 1 вопрос вручную</button>`;
   }
 
   if (state.adminQuestions.length === 0) {
-    html += `<div class="muted">Вопросов пока нет.</div>`;
+    html += `<div class="muted">Вопросов пока нет. Добавьте вручную или через импорт.</div>`;
   } else {
     state.adminQuestions.forEach((q, index) => {
       let answersHtml = q.a.map((ans, i) => `<div style="font-size:14px; margin-top:4px; ${i === q.c ? 'color:green; font-weight:bold;' : 'color:#555;'}">${i === q.c ? '✅' : '➖'} ${escapeHtml(ans)}</div>`).join('');
@@ -677,7 +738,6 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
       </tr>
     `).join('') : `<tr><td colspan="5">Нет активных доступов</td></tr>`;
 
-  // Разделяем результаты на завершенные и незавершенные (прерванные)
   const completedResults = results.filter(r => r.status !== 'incomplete');
   const incompleteResults = results.filter(r => r.status === 'incomplete');
 
@@ -909,20 +969,26 @@ window.deselectAllCheckboxes = function() {
   document.querySelectorAll('.student-checkbox').forEach(cb => cb.checked = false);
 };
 
+// ----------------------------------------------------
+// ЛОГИКА ТЕСТА СТУДЕНТА (Избранное, Ошибки)
+// ----------------------------------------------------
+
 async function startTest(testKey, mode) {
   document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px; text-align:center;">⏳ Загрузка вопросов...</h2>';
   
   const { data: qData, error: qError } = await supabaseClient.from('questions').select('*').eq('test_key', testKey);
   if (qError || !qData || qData.length === 0) { alert('Вопросы не найдены!'); renderSelection(); return; }
   
+  // Скачиваем прогресс студента (что он отвечал правильно, что в избранном)
   const { data: sData } = await supabaseClient.from('student_q_state')
      .select('*').eq('username', state.currentUser.username).eq('test_key', testKey);
      
   state.qStates = {};
   (sData || []).forEach(row => {
-      state.qStates[row.question_id] = { is_correct: row.is_correct, is_favorite: row.is_favorite };
+      state.qStates[row.question_id] = { id: row.id, is_correct: row.is_correct, is_favorite: row.is_favorite };
   });
 
+  // Фильтруем вопросы в зависимости от режима
   let filteredQs = qData;
   if (mode === 'wrong') {
       filteredQs = qData.filter(q => {
@@ -943,7 +1009,7 @@ async function startTest(testKey, mode) {
   state.currentIndex = 0;
   state.score = 0;
   state.wrongQuestions = [];
-  state.isRepeatMode = (mode !== 'all'); 
+  state.isRepeatMode = (mode !== 'all'); // Если тест не полный, баллы не идут в общий зачет
   
   saveTestProgress(false); 
   renderQuizShell();
@@ -957,32 +1023,29 @@ window.toggleFavorite = function() {
     state.qStates[q.id] = st;
     
     const btn = document.getElementById('btn-favorite');
-    // Звезда: серая если пустая, золотая если добавлена
-    btn.style.color = st.is_favorite ? '#f59e0b' : '#cbd5e1';
+    btn.style.color = st.is_favorite ? '#f59e0b' : '#cbd5e1'; // Золотой или серый
     
     saveQState(q.id, st.is_correct, st.is_favorite);
     saveTestProgress(); 
 };
 
-window.saveQState = function(qId, isCorrect, isFavorite) {
-    supabaseClient.from('student_q_state').select('id, is_correct')
-        .eq('username', state.currentUser.username)
-        .eq('question_id', qId).single().then(({data}) => {
-        
-        const payload = { 
-            username: state.currentUser.username, 
-            test_key: state.currentTestKey, 
-            question_id: qId, 
-            is_correct: (isCorrect === null) ? (data ? data.is_correct : false) : isCorrect, 
-            is_favorite: !!isFavorite
-        };
-        
-        if (data) {
-            supabaseClient.from('student_q_state').update(payload).eq('id', data.id).then();
-        } else {
-            supabaseClient.from('student_q_state').insert([payload]).then();
-        }
-    });
+// Функция для невидимого сохранения каждого клика студента в БД (UPSERT)
+window.saveQState = async function(qId, isCorrect, isFavorite) {
+    const st = state.qStates[qId];
+    const payload = { 
+        username: state.currentUser.username, 
+        test_key: state.currentTestKey, 
+        question_id: qId, 
+        is_correct: isCorrect, 
+        is_favorite: !!isFavorite
+    };
+    
+    if (st && st.id) {
+        await supabaseClient.from('student_q_state').update(payload).eq('id', st.id);
+    } else {
+        const { data } = await supabaseClient.from('student_q_state').insert([payload]).select().single();
+        if (data) state.qStates[qId] = data; // Запоминаем ID созданной строки
+    }
 };
 
 function loadQuestion() {
@@ -1033,6 +1096,7 @@ function selectAnswer(selectedBtn, isCorrect) {
     if (!state.isRepeatMode) state.wrongQuestions.push(cloneQuestion(state.questions[state.currentIndex]));
   } else state.score++;
 
+  // Перезаписываем данные в базе: если решил правильно, вопрос удалится из "Ошибок"
   const qId = state.questions[state.currentIndex].id;
   let st = state.qStates[qId] || { is_correct: null, is_favorite: false };
   st.is_correct = isCorrect;
