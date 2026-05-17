@@ -16,17 +16,8 @@ const screenAdmin = document.getElementById('screen-admin');
 
 let currentAdminTab = 'subjects';
 
-const TEST_TITLES = {
-  macroeconomics: 'Макроэкономика',
-  personal_finance: 'Персональные финансы',
-  portfolio_theory: 'Теория портфеля',
-  econometrics: 'Эконометрика',
-  bank_accounting: 'Бухгалтерия в банке',
-  bank_accounting_records: 'Бухгалтерский учет в банке',
-  green_economy: 'Зеленая экономика',
-  money_and_banks: 'Деньги и банки',
-  finance: 'Финансы'
-};
+// Теперь предметы подгружаются динамически из базы!
+let TEST_TITLES = {};
 
 const state = {
   currentUser: null,
@@ -52,6 +43,15 @@ const SESSION_LIMIT_MS = 5 * 60 * 60 * 1000;
 let sessionCheckInterval = null;
 let isLoggingIn = false;
 let allStudentsCache = []; 
+
+// --- СИНХРОНИЗАЦИЯ ПРЕДМЕТОВ С БАЗОЙ ---
+async function syncSubjects() {
+  const { data } = await supabaseClient.from('subjects').select('*').order('title', { ascending: true });
+  TEST_TITLES = {};
+  if (data) {
+    data.forEach(s => TEST_TITLES[s.test_key] = s.title);
+  }
+}
 
 function escapeHtml(value) {
   return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
@@ -110,7 +110,7 @@ function clearTestProgress() {
 }
 
 function getTestTitle(key) {
-  return TEST_TITLES[key] || 'Тест';
+  return TEST_TITLES[key] || key;
 }
 
 async function getIPAddress() {
@@ -215,7 +215,6 @@ async function handleLogin() {
   const sessionToken = Math.random().toString(36).substring(2, 15);
   await supabaseClient.from('users').update({ session_token: sessionToken }).eq('id', data.id);
 
-  const deviceInfo = navigator.userAgent.substring(0, 50) + "...";
   await supabaseClient.from('login_history').insert([{ username: data.username, ip_address: userIP }]);
 
   const sessionData = { ...data, session_token: sessionToken, loginTimestamp: Date.now() };
@@ -226,6 +225,8 @@ async function handleLogin() {
   sessionCheckInterval = setInterval(securityCheck, 15000);
 
   isLoggingIn = false;
+  
+  await syncSubjects();
 
   if (data.role === 'admin' || data.role === 'superadmin') await openAdminPanel();
   else await renderSelection();
@@ -248,8 +249,9 @@ async function changeMyPassword() {
 
 async function renderSelection() {
   showScreen('screen-selection');
+  await syncSubjects();
+  
   const now = new Date().toISOString();
-
   const { data, error } = await supabaseClient
     .from('test_access')
     .select('*')
@@ -296,10 +298,8 @@ async function renderSelection() {
   data.forEach(test => { 
       const parts = Array.from(partsMap[test.test_key] || ['Основная часть']);
       
-      // Добавили кнопку "Полный тест", которая всегда отображается первой
       let partsButtons = `<button class="btn-ok" style="margin:0; margin-bottom:5px; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'all')">▶️ Полный тест</button>`;
       
-      // Если есть разделение, добавляем кнопки частей
       if (parts.length > 1 || (parts.length === 1 && parts[0] !== 'Основная часть')) {
           partsButtons += ' ' + parts.map(p => 
               `<button class="btn-primary" style="margin:0; margin-bottom:5px; width:auto; padding:8px 15px; font-size:13px; background:#3b82f6;" onclick="startTest('${test.test_key}', 'part', '${escapeHtml(p)}')">▶️ ${escapeHtml(p)}</button>`
@@ -407,6 +407,48 @@ function switchAdminTab(tabId) {
     content.classList.add('active');
   }
 }
+
+// ----------------------------------------------------
+// ДИНАМИЧЕСКОЕ СОЗДАНИЕ И УДАЛЕНИЕ ПРЕДМЕТОВ
+// ----------------------------------------------------
+window.createSubject = async function() {
+    const title = document.getElementById('new-subj-title').value.trim();
+    let key = document.getElementById('new-subj-key').value.trim().toLowerCase();
+    
+    if(!title || !key) return alert('Заполните оба поля: название и системный ключ!');
+    if(!/^[a-z0-9_]+$/.test(key)) return alert('Ключ должен содержать только английские буквы, цифры и знак подчеркивания _ (без пробелов)!');
+    
+    const {error} = await supabaseClient.from('subjects').insert([{test_key: key, title: title}]);
+    if(error) return alert('Ошибка создания. Возможно предмет с таким ключом уже существует.');
+    
+    document.getElementById('new-subj-title').value = '';
+    document.getElementById('new-subj-key').value = '';
+    openAdminPanel();
+}
+
+window.renameSubject = async function(key) {
+    const currentTitle = TEST_TITLES[key];
+    const newTitle = prompt(`Введите новое название для предмета:`, currentTitle);
+    if(!newTitle || newTitle.trim() === currentTitle) return;
+    
+    const {error} = await supabaseClient.from('subjects').update({title: newTitle.trim()}).eq('test_key', key);
+    if(error) return alert('Ошибка при переименовании предмета');
+    openAdminPanel();
+}
+
+window.deleteSubject = async function(key) {
+    const title = TEST_TITLES[key];
+    if(!confirm(`Вы уверены, что хотите удалить предмет "${title}"?\n\nВНИМАНИЕ: Это также удалит все вопросы, связанные с ним, и отзовет доступы у студентов.`)) return;
+    
+    document.getElementById('subjects-list-container').innerHTML = '<h2 style="text-align:center; padding: 50px;">⏳ Удаление...</h2>';
+    
+    await supabaseClient.from('questions').delete().eq('test_key', key);
+    await supabaseClient.from('test_access').delete().eq('test_key', key);
+    await supabaseClient.from('subjects').delete().eq('test_key', key);
+    
+    openAdminPanel();
+}
+
 
 async function createGroup() {
     const groupName = document.getElementById('new-group-input').value.trim();
@@ -799,20 +841,27 @@ window.unbanIP = async function(id) {
   openAdminPanel();
 };
 
-function renderAdminPanel(users = [], results = [], accesses = [], history = [], bannedIps = [], groups = []) {
+async function renderAdminPanel(users = [], results = [], accesses = [], history = [], bannedIps = [], groups = []) {
   state.adminUsers = users;
   state.adminGroups = groups;
   
   showScreen('screen-admin');
   const isSuperadmin = state.currentUser.role === 'superadmin';
 
+  // Генерируем карточки предметов динамически
   const subjectsGrid = Object.keys(TEST_TITLES).map(key => `
-    <div class="card" style="box-shadow:none; border:1px solid #d7dce3; margin-top:10px; display:flex; justify-content:space-between; align-items:center; padding:15px;">
+    <div class="card" style="box-shadow:none; border:1px solid #d7dce3; margin-top:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; padding:15px;">
       <div>
         <div style="font-weight:bold; font-size:16px;">${escapeHtml(TEST_TITLES[key])}</div>
         <div style="font-size:12px; color:#888; margin-top:4px;">Ключ: ${escapeHtml(key)}</div>
       </div>
-      <button class="btn-primary" style="width:auto; padding:10px 20px; margin:0;" onclick="openSubjectManager('${key}')">Управление</button>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn-primary" style="margin:0; padding:8px 15px; font-size:13px;" onclick="openSubjectManager('${key}')">Вопросы</button>
+        ${isSuperadmin ? `
+        <button class="btn-gray" style="margin:0; padding:8px 15px; font-size:13px;" onclick="renameSubject('${key}')">✏️ Название</button>
+        <button class="btn-bad" style="margin:0; padding:8px 15px; font-size:13px;" onclick="deleteSubject('${key}')">❌ Удалить</button>
+        ` : ''}
+      </div>
     </div>
   `).join('');
 
@@ -941,7 +990,17 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
     
     <div id="tab-subjects" class="tab-content admin-section">
       <div id="subjects-list-container">
-        <h2>Список предметов</h2>
+        <h2>Управление предметами</h2>
+        ${isSuperadmin ? `
+        <div class="card" style="box-shadow:none; padding:15px; margin-bottom:20px;">
+           <h3 style="margin-top:0;">Добавить новый предмет</h3>
+           <div style="display:flex; gap:10px; flex-wrap:wrap;">
+               <input id="new-subj-title" placeholder="Название предмета (напр: Экономика)" style="margin:0; flex:1;" />
+               <input id="new-subj-key" placeholder="Системный ключ (англ., напр: economics)" style="margin:0; flex:1;" />
+               <button class="btn-ok" style="margin:0; width:auto; padding: 0 20px;" onclick="createSubject()">Создать</button>
+           </div>
+        </div>
+        ` : ''}
         <div style="margin-top:15px;">${subjectsGrid}</div>
       </div>
       <div id="subject-editor-container" class="hidden">
@@ -1372,6 +1431,10 @@ async function deleteResult(id) {
 
 async function openAdminPanel() {
   showScreen('screen-admin');
+  
+  // Дожидаемся обновления словаря предметов
+  await syncSubjects();
+  
   const now = new Date().toISOString();
   await supabaseClient.from('test_access').delete().lt('end_time', now);
 
@@ -1400,7 +1463,7 @@ function filterTableRows(rowClassName, selectedKey) {
   });
 }
 
-function init() {
+async function init() {
   if (typeof supabase === 'undefined') {
       const loginScreen = document.getElementById('screen-login');
       if(loginScreen) {
@@ -1434,6 +1497,9 @@ function init() {
           if (savedProgressStr) {
               try {
                   const prog = JSON.parse(savedProgressStr);
+                  
+                  await syncSubjects(); // Нужно подгрузить названия
+                  
                   state.currentTestKey = prog.currentTestKey;
                   state.currentPartName = prog.currentPartName || null;
                   state.questions = prog.questions;
