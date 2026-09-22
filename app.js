@@ -44,6 +44,10 @@ let sessionCheckInterval = null;
 let isLoggingIn = false;
 let allStudentsCache = []; 
 
+// Переменные для Лайв мониторинга
+let liveSubscription = null;
+let liveStats = {};
+
 // --- СИНХРОНИЗАЦИЯ ПРЕДМЕТОВ С БАЗОЙ ---
 async function syncSubjects() {
   const { data } = await supabaseClient.from('subjects').select('*').order('title', { ascending: true });
@@ -448,7 +452,6 @@ window.deleteSubject = async function(key) {
     
     openAdminPanel();
 }
-
 
 async function createGroup() {
     const groupName = document.getElementById('new-group-input').value.trim();
@@ -985,6 +988,7 @@ async function renderAdminPanel(users = [], results = [], accesses = [], history
       <button id="btn-results" class="tab-btn" onclick="switchAdminTab('results')">Результаты</button>
       <button id="btn-incomplete" class="tab-btn" onclick="switchAdminTab('incomplete')">Незавершенные</button>
       <button id="btn-history" class="tab-btn" onclick="switchAdminTab('history')">История</button>
+      <button id="btn-live" class="tab-btn" style="background:#f59e0b; color:white;" onclick="switchAdminTab('live')">🔴 LIVE</button>
       ${isSuperadmin ? `<button id="btn-blacklist" class="tab-btn" style="color: red;" onclick="switchAdminTab('blacklist')">Бан-лист</button>` : ''}
     </div>
     
@@ -1011,6 +1015,18 @@ async function renderAdminPanel(users = [], results = [], accesses = [], history
       </div>
     </div>
     
+    <div id="tab-live" class="tab-content admin-section">
+      <h2>🔴 Лайв мониторинг (Kahoot режим)</h2>
+      <div class="muted">Ответы студентов появляются здесь в реальном времени.</div>
+      <select id="live-test-select" style="margin-bottom: 20px;" onchange="startLiveTracking()">
+        <option value="">Выберите предмет для слежения...</option>
+        ${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
+      </select>
+      <div id="live-dashboard" class="grid" style="grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px;">
+          <!-- Карточки студентов будут появляться здесь -->
+      </div>
+    </div>
+
     <div id="tab-students" class="tab-content admin-section">
       <div id="students-main-view">
           <h2>Управление группами</h2>
@@ -1123,6 +1139,101 @@ async function renderAdminPanel(users = [], results = [], accesses = [], history
   switchAdminTab(currentAdminTab);
   if (state.activeGroupManager) openGroupManager(state.activeGroupManager);
 }
+
+// ----------------------------------------------------
+// ЛОГИКА ЛАЙВ МОНИТОРИНГА
+// ----------------------------------------------------
+window.startLiveTracking = async function() {
+    const testKey = document.getElementById('live-test-select').value;
+    const dashboard = document.getElementById('live-dashboard');
+    if (!testKey) { dashboard.innerHTML = ''; return; }
+
+    dashboard.innerHTML = '<div class="muted">Ожидание ответов...</div>';
+    liveStats = {}; 
+
+    // Запрашиваем текущие ответы для выбранного теста
+    const { data } = await supabaseClient
+        .from('student_q_state')
+        .select('username, is_correct')
+        .eq('test_key', testKey);
+    
+    if (data) {
+        data.forEach(row => updateLiveStat(row.username, row.is_correct));
+        renderLiveDashboard();
+    }
+
+    // Отключаем предыдущую подписку, если была
+    if (liveSubscription) supabaseClient.removeChannel(liveSubscription);
+
+    // Подписываемся на обновления в реальном времени
+    liveSubscription = supabaseClient
+        .channel('public:student_q_state')
+        .on('postgres_changes', { 
+            event: 'INSERT', 
+            schema: 'public', 
+            table: 'student_q_state',
+            filter: `test_key=eq.${testKey}`
+        }, payload => {
+            updateLiveStat(payload.new.username, payload.new.is_correct);
+            renderLiveDashboard();
+            highlightStudent(payload.new.username);
+        })
+        .on('postgres_changes', { 
+            event: 'UPDATE', 
+            schema: 'public', 
+            table: 'student_q_state',
+            filter: `test_key=eq.${testKey}`
+        }, payload => {
+            updateLiveStat(payload.new.username, payload.new.is_correct, payload.old.is_correct);
+            renderLiveDashboard();
+            highlightStudent(payload.new.username);
+        })
+        .subscribe();
+};
+
+function updateLiveStat(username, isCorrect, oldIsCorrect = null) {
+    if (!liveStats[username]) liveStats[username] = { correct: 0, wrong: 0, total: 0 };
+    
+    if (oldIsCorrect !== null) {
+        if (oldIsCorrect === true) liveStats[username].correct--;
+        if (oldIsCorrect === false) liveStats[username].wrong--;
+    } else {
+        liveStats[username].total++;
+    }
+
+    if (isCorrect === true) liveStats[username].correct++;
+    if (isCorrect === false) liveStats[username].wrong++;
+}
+
+function renderLiveDashboard() {
+    const dashboard = document.getElementById('live-dashboard');
+    if (Object.keys(liveStats).length === 0) return;
+
+    dashboard.innerHTML = Object.keys(liveStats)
+        .sort((a, b) => liveStats[b].correct - liveStats[a].correct) // Лидеры сверху
+        .map(username => {
+            const stat = liveStats[username];
+            return `
+            <div id="live-card-${username}" class="card" style="margin-top:0; padding:15px; border:2px solid transparent; transition: border-color 0.3s; text-align: left;">
+                <h3 style="margin:0 0 10px 0; font-size:18px;">👤 ${escapeHtml(username)}</h3>
+                <div style="font-size: 14px;">
+                    <span style="color: green; font-weight:bold;">✅ Правильных: ${stat.correct}</span><br>
+                    <span style="color: red; font-weight:bold;">❌ Ошибок: ${stat.wrong}</span><br>
+                    <span style="color: gray;">📊 Всего ответов: ${stat.correct + stat.wrong}</span>
+                </div>
+            </div>
+            `;
+        }).join('');
+}
+
+function highlightStudent(username) {
+    const card = document.getElementById(`live-card-${username}`);
+    if (card) {
+        card.style.borderColor = '#1368CE';
+        setTimeout(() => { card.style.borderColor = 'transparent'; }, 500);
+    }
+}
+// ----------------------------------------------------
 
 window.toggleAccessMode = function() {
     const mode = document.querySelector('input[name="access_type"]:checked').value;
