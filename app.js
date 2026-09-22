@@ -15,8 +15,6 @@ const screenResult = document.getElementById('screen-result');
 const screenAdmin = document.getElementById('screen-admin');
 
 let currentAdminTab = 'subjects';
-
-// Теперь предметы подгружаются динамически из базы!
 let TEST_TITLES = {};
 
 const state = {
@@ -28,9 +26,7 @@ const state = {
   score: 0,
   wrongQuestions: [],
   isRepeatMode: false,
-  
   qStates: {}, 
-  
   adminQuestions: [],
   adminUsers: [],
   adminGroups: [],
@@ -48,7 +44,6 @@ let allStudentsCache = [];
 let liveSubscription = null;
 let liveStats = {};
 
-// --- СИНХРОНИЗАЦИЯ ПРЕДМЕТОВ С БАЗОЙ ---
 async function syncSubjects() {
   const { data } = await supabaseClient.from('subjects').select('*').order('title', { ascending: true });
   TEST_TITLES = {};
@@ -86,13 +81,8 @@ function showScreen(activeId) {
   }
 }
 
-function setSavedUser(user) {
-  localStorage.setItem('user', JSON.stringify(user));
-}
-
-function clearSavedUser() {
-  localStorage.removeItem('user');
-}
+function setSavedUser(user) { localStorage.setItem('user', JSON.stringify(user)); }
+function clearSavedUser() { localStorage.removeItem('user'); }
 
 function saveTestProgress(isAnswered = false) {
   if (!state.currentTestKey) return;
@@ -109,13 +99,8 @@ function saveTestProgress(isAnswered = false) {
   localStorage.setItem('test_progress', JSON.stringify(progress));
 }
 
-function clearTestProgress() {
-  localStorage.removeItem('test_progress');
-}
-
-function getTestTitle(key) {
-  return TEST_TITLES[key] || key;
-}
+function clearTestProgress() { localStorage.removeItem('test_progress'); }
+function getTestTitle(key) { return TEST_TITLES[key] || key; }
 
 async function getIPAddress() {
   try {
@@ -293,15 +278,19 @@ async function renderSelection() {
   testKeys.forEach(k => partsMap[k] = new Set());
   
   if (qData) {
-      qData.forEach(q => {
-          partsMap[q.test_key].add(q.part_name || 'Основная часть');
-      });
+      qData.forEach(q => { partsMap[q.test_key].add(q.part_name || 'Основная часть'); });
   }
 
   html += `<div style="max-width:600px; margin:0 auto;">`;
   data.forEach(test => { 
       const parts = Array.from(partsMap[test.test_key] || ['Основная часть']);
       
+      const used = test.used_attempts || 0;
+      const max = test.max_attempts || 1;
+      const isExhausted = used >= max;
+      
+      let attemptsBadge = `<div style="font-size:13px; margin-bottom:10px; color:${isExhausted ? 'var(--bad)' : 'var(--ok)'};"><b>Попыток: ${used} из ${max}</b></div>`;
+
       let partsButtons = `<button class="btn-ok" style="margin:0; margin-bottom:5px; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'all')">▶️ Полный тест</button>`;
       
       if (parts.length > 1 || (parts.length === 1 && parts[0] !== 'Основная часть')) {
@@ -310,15 +299,20 @@ async function renderSelection() {
           ).join(' ');
       }
 
+      if (isExhausted) {
+          partsButtons = `<div class="muted" style="margin-bottom:10px; text-align:left;">❌ Вы исчерпали доступные попытки для этого теста.</div>`;
+      }
+
       html += `
       <div class="card" style="box-shadow:none; border:1px solid #d7dce3; margin-bottom:15px; text-align:left;">
-          <h3 style="margin-top:0; margin-bottom:12px;">${escapeHtml(getTestTitle(test.test_key))}</h3>
+          <h3 style="margin-top:0; margin-bottom:6px;">${escapeHtml(getTestTitle(test.test_key))}</h3>
+          ${attemptsBadge}
           <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom: 10px;">
               ${partsButtons}
           </div>
           <div style="display:flex; gap:10px; flex-wrap:wrap; border-top: 1px solid #eee; padding-top: 10px;">
-              <button class="btn-bad" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'wrong')">❌ Ошибки</button>
-              <button class="btn-gray" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'favorite')">⭐ Избранные</button>
+              <button class="btn-bad" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'wrong')">❌ Ошибки (не тратит попытку)</button>
+              <button class="btn-gray" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="startTest('${test.test_key}', 'favorite')">⭐ Избранные (не тратит попытку)</button>
           </div>
       </div>
       `; 
@@ -329,7 +323,7 @@ async function renderSelection() {
 }
 
 window.pauseTest = async function() {
-    if (!confirm('Приостановить тест и вернуться в меню? Ваш прогресс будет сохранен.')) return;
+    if (!confirm('Приостановить тест и вернуться в меню? Ваш прогресс будет сохранен (попытка считается начатой).')) return;
     
     if (!state.isRepeatMode) {
         document.getElementById('screen-quiz').innerHTML = '<h2 style="text-align:center; padding: 50px;">Сохранение...</h2>';
@@ -350,7 +344,7 @@ function renderQuizShell() {
   screenQuiz.innerHTML = `
     <div class="screen-top">
       <div class="left" style="display:flex; align-items:center;">
-        <button class="btn-gray" style="padding:6px 12px; margin-right:15px; font-size:14px; width:auto;" onclick="pauseTest()">🔙 Назад</button>
+        <button class="btn-gray" style="padding:6px 12px; margin-right:15px; font-size:14px; width:auto;" onclick="pauseTest()">🔙 Назад (Пауза)</button>
         <div>
             <h1 id="quiz-title" class="title-left" style="margin:0;">
                 ${escapeHtml(getTestTitle(state.currentTestKey))}
@@ -375,12 +369,11 @@ function renderResult() {
   const wrong = total - state.score;
   const percent = total ? Math.round((state.score / total) * 100) : 0;
 
-  let text = state.isRepeatMode ? 'Тренировка завершена (в базу не сохраняется).' : 'Результат сохранён.';
+  let text = state.isRepeatMode ? 'Тренировка завершена (в базу не сохраняется).' : 'Результат сохранён. Вы использовали 1 попытку.';
   if (!state.isRepeatMode) {
     if (percent >= 90) text += ' Отличный результат.';
-    else if (percent >= 60) text += ' проходной.';
-    else if (percent >= 0) text += ' пересдача.';
-    else text += ' .';
+    else if (percent >= 60) text += ' Проходной балл.';
+    else if (percent >= 0) text += ' Нужно повторить материал.';
   }
 
   screenResult.innerHTML = `
@@ -412,9 +405,7 @@ function switchAdminTab(tabId) {
   }
 }
 
-// ----------------------------------------------------
-// ДИНАМИЧЕСКОЕ СОЗДАНИЕ И УДАЛЕНИЕ ПРЕДМЕТОВ
-// ----------------------------------------------------
+// Управление предметами
 window.createSubject = async function() {
     const title = document.getElementById('new-subj-title').value.trim();
     let key = document.getElementById('new-subj-key').value.trim().toLowerCase();
@@ -429,102 +420,82 @@ window.createSubject = async function() {
     document.getElementById('new-subj-key').value = '';
     openAdminPanel();
 }
-
 window.renameSubject = async function(key) {
     const currentTitle = TEST_TITLES[key];
     const newTitle = prompt(`Введите новое название для предмета:`, currentTitle);
     if(!newTitle || newTitle.trim() === currentTitle) return;
-    
     const {error} = await supabaseClient.from('subjects').update({title: newTitle.trim()}).eq('test_key', key);
-    if(error) return alert('Ошибка при переименовании предмета');
+    if(error) return alert('Ошибка при переименовании');
     openAdminPanel();
 }
-
 window.deleteSubject = async function(key) {
     const title = TEST_TITLES[key];
-    if(!confirm(`Вы уверены, что хотите удалить предмет "${title}"?\n\nВНИМАНИЕ: Это также удалит все вопросы, связанные с ним, и отзовет доступы у студентов.`)) return;
-    
+    if(!confirm(`Удалить предмет "${title}" со всеми вопросами и доступами?`)) return;
     document.getElementById('subjects-list-container').innerHTML = '<h2 style="text-align:center; padding: 50px;">⏳ Удаление...</h2>';
-    
     await supabaseClient.from('questions').delete().eq('test_key', key);
     await supabaseClient.from('test_access').delete().eq('test_key', key);
     await supabaseClient.from('subjects').delete().eq('test_key', key);
-    
     openAdminPanel();
 }
 
+// Управление группами
 async function createGroup() {
     const groupName = document.getElementById('new-group-input').value.trim();
     if (!groupName) return alert('Введите название группы');
     const { error } = await supabaseClient.from('groups').insert([{ name: groupName }]);
-    if (error) alert('Ошибка создания (возможно группа уже существует)');
+    if (error) alert('Ошибка создания (группа уже существует)');
     else openAdminPanel();
 }
-
 async function deleteGroup(id, name) {
-    if (!confirm(`Удалить группу "${name}"? Все студенты в ней будут переведены в статус "Без группы".`)) return;
+    if (!confirm(`Удалить группу "${name}"? Студенты будут переведены в "Без группы".`)) return;
     await supabaseClient.from('users').update({ group_name: 'Без группы' }).eq('group_name', name);
     await supabaseClient.from('groups').delete().eq('id', id);
     openAdminPanel();
 }
-
 function openGroupManager(groupName) {
     state.activeGroupManager = groupName;
     document.getElementById('students-main-view').classList.add('hidden');
     document.getElementById('group-editor-view').classList.remove('hidden');
-    
     document.getElementById('group-editor-title').innerText = `Состав группы: ${escapeHtml(groupName)}`;
     
     const groupUsers = state.adminUsers.filter(u => u.group_name === groupName && u.role === 'student');
     const groupUsersHtml = groupUsers.length ? groupUsers.map(u => `
-        <tr>
-            <td>${escapeHtml(u.username)}</td>
-            <td><button class="btn-bad" style="padding:6px 12px; width:auto; font-size:12px;" onclick="removeUserFromGroup(${u.id})">Исключить</button></td>
-        </tr>
+        <tr><td>${escapeHtml(u.username)}</td><td><button class="btn-bad" style="padding:6px 12px; width:auto; font-size:12px;" onclick="removeUserFromGroup(${u.id})">Исключить</button></td></tr>
     `).join('') : `<tr><td colspan="2" class="muted">В группе пока нет студентов</td></tr>`;
-    
     document.getElementById('group-members-list').innerHTML = `<table><tr><th>Студент</th><th>Действие</th></tr>${groupUsersHtml}</table>`;
 
     const availableUsers = state.adminUsers.filter(u => u.group_name !== groupName && u.role === 'student');
     const optionsHtml = availableUsers.length ? availableUsers.map(u => `<option value="${u.id}">${escapeHtml(u.username)} (сейчас: ${escapeHtml(u.group_name || 'Без группы')})</option>`).join('') : `<option value="">Нет доступных студентов</option>`;
-    
     document.getElementById('add-to-group-select').innerHTML = optionsHtml;
 }
-
 function closeGroupManager() {
     state.activeGroupManager = null;
     document.getElementById('group-editor-view').classList.add('hidden');
     document.getElementById('students-main-view').classList.remove('hidden');
 }
-
 async function addUserToGroup() {
-    const select = document.getElementById('add-to-group-select');
-    const userId = select.value;
+    const userId = document.getElementById('add-to-group-select').value;
     if (!userId) return alert('Выберите студента');
-    
     await supabaseClient.from('users').update({ group_name: state.activeGroupManager }).eq('id', userId);
     await openAdminPanel(); 
 }
-
 async function removeUserFromGroup(userId) {
     if (!confirm('Исключить студента из группы?')) return;
     await supabaseClient.from('users').update({ group_name: 'Без группы' }).eq('id', userId);
     await openAdminPanel();
 }
 
+// Вопросы
 async function openSubjectManager(testKey) {
   state.activeSubjectKey = testKey;
   document.getElementById('subjects-list-container').classList.add('hidden');
   document.getElementById('subject-editor-container').classList.remove('hidden');
   document.getElementById('subject-editor-title').innerText = 'Загрузка вопросов...';
-
   const { data, error } = await supabaseClient.from('questions').select('*').eq('test_key', testKey).order('id', { ascending: true });
   if (error) { alert('Ошибка загрузки вопросов'); return; }
-
   state.adminQuestions = data || [];
   renderSubjectQuestionsList();
 }
-
 function closeSubjectManager() {
   state.activeSubjectKey = null;
   state.editingQuestionId = null;
@@ -535,9 +506,7 @@ function closeSubjectManager() {
 window.parseAndImportQuestions = async function() {
     const text = document.getElementById('import-text').value;
     const partName = document.getElementById('import-part-name').value.trim() || 'Основная часть';
-    
     if (!text) return alert('Вставьте текст с вопросами!');
-    
     document.getElementById('import-btn').innerText = 'Импорт...';
     document.getElementById('import-btn').disabled = true;
 
@@ -547,117 +516,88 @@ window.parseAndImportQuestions = async function() {
     for (let block of blocks) {
         const firstSeparatorIdx = block.search(/====/);
         if (firstSeparatorIdx === -1) continue;
-        
         const qText = block.substring(0, firstSeparatorIdx).trim();
         const optionsString = block.substring(firstSeparatorIdx);
-        
         const optionParts = optionsString.split('====').filter(o => o.trim());
         const options = [];
         let correctIdx = 0;
         
         for (let i = 0; i < optionParts.length; i++) {
             let part = optionParts[i].trim();
-            if (part.startsWith('#')) {
-                correctIdx = i;
-                options.push(part.substring(1).trim());
-            } else {
-                options.push(part);
-            }
+            if (part.startsWith('#')) { correctIdx = i; options.push(part.substring(1).trim()); } 
+            else { options.push(part); }
         }
-        
-        if (options.length > 0) {
-            questionsToInsert.push({ test_key: state.activeSubjectKey, part_name: partName, q: qText, a: options, c: correctIdx });
-        }
+        if (options.length > 0) { questionsToInsert.push({ test_key: state.activeSubjectKey, part_name: partName, q: qText, a: options, c: correctIdx }); }
     }
     
     if (!questionsToInsert.length) {
-        alert('Вопросы не распознаны. Проверьте правильность расстановки +++++ и ====');
+        alert('Вопросы не распознаны.');
         document.getElementById('import-btn').innerText = 'Импортировать вопросы';
         document.getElementById('import-btn').disabled = false;
         return;
     }
 
     const { error } = await supabaseClient.from('questions').insert(questionsToInsert);
-    
-    if (error) {
-        alert('Ошибка при импорте в базу данных');
-        console.error(error);
-    } else {
-        alert(`Успешно импортировано ${questionsToInsert.length} вопросов в раздел "${partName}"!`);
+    if (error) alert('Ошибка при импорте');
+    else {
+        alert(`Успешно импортировано ${questionsToInsert.length} вопросов в "${partName}"!`);
         document.getElementById('import-text').value = '';
         openSubjectManager(state.activeSubjectKey);
     }
 };
 
-window.toggleAllQuestions = function(checkbox) {
-    document.querySelectorAll('.question-checkbox').forEach(cb => cb.checked = checkbox.checked);
+window.toggleAllCheckboxes = function(checkbox, className) {
+    document.querySelectorAll('.' + className).forEach(cb => cb.checked = checkbox.checked);
 };
 
 window.deleteSelectedQuestions = async function() {
     const selectedIds = [...document.querySelectorAll('.question-checkbox:checked')].map(cb => parseInt(cb.value));
-    
-    if (selectedIds.length === 0) {
-        return alert('Сначала выберите галочкой хотя бы один вопрос для удаления!');
-    }
-    
-    if (!confirm(`Вы действительно хотите удалить выбранные вопросы (${selectedIds.length} шт.)? Это действие необратимо!`)) {
-        return;
-    }
+    if (selectedIds.length === 0) return alert('Выберите галочкой хотя бы один вопрос!');
+    if (!confirm(`Удалить выбранные вопросы (${selectedIds.length} шт.)?`)) return;
 
     document.getElementById('questions-list-render').innerHTML = '<h2 style="text-align:center; padding: 50px;">Удаление...</h2>';
-
-    const { error } = await supabaseClient.from('questions').delete().in('id', selectedIds);
-
-    if (error) {
-        alert('Ошибка при удалении вопросов');
-        console.error(error);
-    }
-
+    await supabaseClient.from('questions').delete().in('id', selectedIds);
     openSubjectManager(state.activeSubjectKey);
 };
 
-window.splitQuestionsIntoParts = async function() {
-    if (state.adminQuestions.length === 0) {
-        return alert("В этом предмете нет вопросов для разделения.");
-    }
-
-    const numPartsStr = prompt(`У вас ${state.adminQuestions.length} вопросов.\nНа сколько равных частей вы хотите их разделить? (введите число, например, 3)`);
-    if (!numPartsStr) return;
-
-    const numParts = parseInt(numPartsStr, 10);
-    if (isNaN(numParts) || numParts < 2) {
-        return alert("Пожалуйста, введите число больше 1.");
-    }
-
-    if (numParts > state.adminQuestions.length) {
-        return alert("Количество частей не может быть больше количества вопросов!");
-    }
-
-    document.getElementById('questions-list-render').innerHTML = '<h2 style="text-align:center; padding: 50px;">⏳ Разделение на части...</h2>';
-
-    const chunkSize = Math.ceil(state.adminQuestions.length / numParts);
+// Функция массового удаления РЕЗУЛЬТАТОВ
+window.deleteSelectedResults = async function(tableNameType) {
+    const className = tableNameType === 'completed' ? 'result-checkbox' : 'incomplete-checkbox';
+    const selectedIds = [...document.querySelectorAll('.' + className + ':checked')].map(cb => parseInt(cb.value));
     
+    if (selectedIds.length === 0) return alert('Выберите галочкой хотя бы один результат!');
+    if (!confirm(`Удалить выбранные результаты (${selectedIds.length} шт.)?`)) return;
+
+    const targetTab = tableNameType === 'completed' ? 'tab-results' : 'tab-incomplete';
+    document.getElementById(targetTab).style.opacity = '0.5';
+    
+    const { error } = await supabaseClient.from('results').delete().in('id', selectedIds);
+    if (error) { alert('Ошибка при удалении'); document.getElementById(targetTab).style.opacity = '1'; }
+    else openAdminPanel();
+};
+
+window.splitQuestionsIntoParts = async function() {
+    if (state.adminQuestions.length === 0) return alert("Нет вопросов для разделения.");
+    const numPartsStr = prompt(`На сколько равных частей разделить ${state.adminQuestions.length} вопросов?`);
+    if (!numPartsStr) return;
+    const numParts = parseInt(numPartsStr, 10);
+    if (isNaN(numParts) || numParts < 2 || numParts > state.adminQuestions.length) return alert("Некорректное число.");
+
+    document.getElementById('questions-list-render').innerHTML = '<h2 style="text-align:center; padding: 50px;">⏳ Разделение...</h2>';
+    const chunkSize = Math.ceil(state.adminQuestions.length / numParts);
     const promises = state.adminQuestions.map((q, index) => {
         const partNum = Math.floor(index / chunkSize) + 1;
         const newPartName = `Часть ${partNum}`;
-        
-        if (q.part_name !== newPartName) {
-            return supabaseClient.from('questions').update({ part_name: newPartName }).eq('id', q.id);
-        }
+        if (q.part_name !== newPartName) return supabaseClient.from('questions').update({ part_name: newPartName }).eq('id', q.id);
         return Promise.resolve();
     });
 
     try {
         await Promise.all(promises);
-        alert(`Все вопросы успешно разделены на ${numParts} частей!`);
-    } catch (e) {
-        console.error(e);
-        alert('Произошла ошибка при разделении.');
-    }
-
+        alert(`Вопросы разделены на ${numParts} частей!`);
+    } catch (e) { alert('Ошибка при разделении.'); }
     openSubjectManager(state.activeSubjectKey);
 };
-
 
 function renderSubjectQuestionsList() {
   const isSuperadmin = state.currentUser.role === 'superadmin';
@@ -668,20 +608,18 @@ function renderSubjectQuestionsList() {
     html += `
       <div class="card" style="box-shadow:none; border:2px dashed #d7dce3; margin-bottom:20px; background:#f8fafc;">
           <h3 style="margin-top:0;">⚡ Быстрый импорт вопросов</h3>
-          <div class="muted" style="margin-bottom:10px; font-size:12px;">Вставьте текст. Каждый вопрос должен начинаться с <b>+++++</b>, а варианты ответов с <b>====</b>. Правильный ответ помечается как <b>====#</b></div>
-          <input id="import-part-name" type="text" placeholder="Название части (по умолчанию: Основная часть)" value="Основная часть" style="width:100%; padding:8px; border-radius:8px; border:1px solid #ccc; margin-bottom:10px; font-family:inherit;">
+          <input id="import-part-name" type="text" placeholder="Название части" value="Основная часть" style="width:100%; padding:8px; border-radius:8px; border:1px solid #ccc; margin-bottom:10px;">
           <textarea id="import-text" style="width:100%; height:100px; padding:10px; border-radius:8px; border:1px solid #ccc; font-family:monospace;" placeholder="+++++ Вопрос 1...\n==== Неверный\n====# Верный..."></textarea>
           <button id="import-btn" class="btn-ok" style="margin-top:10px; width:auto; padding:8px 20px;" onclick="parseAndImportQuestions()">Импортировать вопросы</button>
       </div>
-      
       <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
           <button class="btn-primary" style="margin:0; width:auto; padding:10px 20px;" onclick="openQuestionEditor(null)">+ Создать 1 вопрос вручную</button>
-          <button class="btn-gray" style="margin:0; width:auto; padding:10px 20px; border: 1px solid #000;" onclick="splitQuestionsIntoParts()">✂️ Разделить на части</button>
+          <button class="btn-gray" style="margin:0; width:auto; padding:10px 20px;" onclick="splitQuestionsIntoParts()">✂️ Разделить на части</button>
           <button class="btn-bad" style="margin:0; width:auto; padding:10px 20px;" onclick="deleteSelectedQuestions()">🗑 Удалить выбранные</button>
           
           <label style="cursor:pointer; display:flex; align-items:center; gap:8px; margin-left: auto; font-size:14px; background: #f1f5f9; padding: 8px 15px; border-radius: 8px; border: 1px solid #cbd5e1;">
-              <input type="checkbox" id="select-all-questions" style="margin:0; width:16px; height:16px;" onchange="toggleAllQuestions(this)">
-              <b>Выбрать все вопросы</b>
+              <input type="checkbox" style="margin:0; width:16px; height:16px;" onchange="toggleAllCheckboxes(this, 'question-checkbox')">
+              <b>Выбрать все</b>
           </label>
       </div>
     `;
@@ -703,7 +641,6 @@ function renderSubjectQuestionsList() {
           ${isSuperadmin ? `
             <div style="margin-top: 12px; display:flex; gap:10px;">
               <button class="btn-gray" style="padding:8px; width:auto; font-size:13px;" onclick="openQuestionEditor(${q.id})">✏️ Редактировать</button>
-              <button class="btn-bad" style="padding:8px; width:auto; font-size:13px;" onclick="deleteQuestion(${q.id})">❌ Удалить</button>
             </div>
           ` : ''}
         </div>
@@ -722,45 +659,29 @@ function openQuestionEditor(id) {
   const formContainer = document.getElementById('question-form-container');
   formContainer.classList.remove('hidden');
 
-  let qText = '';
-  let answers = ['', ''];
-  let correctIdx = 0;
-  let qPart = 'Основная часть';
-
+  let qText = ''; let answers = ['', '']; let correctIdx = 0; let qPart = 'Основная часть';
   if (id) {
     const qObj = state.adminQuestions.find(q => q.id === id);
-    if (qObj) {
-      qText = qObj.q;
-      answers = [...qObj.a];
-      correctIdx = qObj.c;
-      qPart = qObj.part_name || 'Основная часть';
-    }
+    if (qObj) { qText = qObj.q; answers = [...qObj.a]; correctIdx = qObj.c; qPart = qObj.part_name || 'Основная часть'; }
   }
 
   formContainer.innerHTML = `
     <div class="card" style="box-shadow: none; border: 2px solid var(--primary); margin-top:0;">
       <h3 style="margin-top:0;">${id ? 'Редактирование вопроса' : 'Новый вопрос'}</h3>
-      
       <label><strong>Часть/Модуль:</strong></label>
-      <input id="edit-q-part" type="text" value="${escapeHtml(qPart)}" style="width:100%; padding:8px; margin-top:5px; margin-bottom:15px; border-radius:8px; border:1px solid #ccc; font-family:inherit;">
-
+      <input id="edit-q-part" type="text" value="${escapeHtml(qPart)}" style="width:100%; padding:8px; margin-top:5px; margin-bottom:15px; border-radius:8px; border:1px solid #ccc;">
       <label><strong>Текст вопроса:</strong></label>
-      <textarea id="edit-q-text" style="width:100%; height:80px; padding:10px; margin-top:5px; border-radius:8px; border:1px solid #ccc; font-family:inherit;">${escapeHtml(qText)}</textarea>
-      
+      <textarea id="edit-q-text" style="width:100%; height:80px; padding:10px; margin-top:5px; border-radius:8px; border:1px solid #ccc;">${escapeHtml(qText)}</textarea>
       <div style="margin-top:15px;"><strong>Варианты ответа (отметьте правильный):</strong></div>
       <div id="edit-answers-list"></div>
-      
       <button class="btn-gray" style="margin-top:10px; width:auto; padding:8px 15px;" onclick="addAnswerField()">+ Добавить вариант</button>
-      
       <div style="margin-top: 20px; display:flex; gap:10px;">
         <button class="btn-ok" onclick="saveQuestion()">Сохранить</button>
         <button class="btn-gray" onclick="cancelQuestionEdit()">Отмена</button>
       </div>
     </div>
   `;
-
-  window._tempAnswers = answers;
-  window._tempCorrect = correctIdx;
+  window._tempAnswers = answers; window._tempCorrect = correctIdx;
   renderAnswerFields();
 }
 
@@ -774,19 +695,13 @@ function renderAnswerFields() {
     </div>
   `).join('');
 }
-
-window.addAnswerField = function() {
-  window._tempAnswers.push('');
-  renderAnswerFields();
-};
-
+window.addAnswerField = function() { window._tempAnswers.push(''); renderAnswerFields(); };
 window.removeAnswerField = function(idx) {
   if (window._tempAnswers.length <= 2) { alert('Минимум 2 варианта ответа!'); return; }
   window._tempAnswers.splice(idx, 1);
   if (window._tempCorrect >= window._tempAnswers.length) window._tempCorrect = 0;
   renderAnswerFields();
 };
-
 window.cancelQuestionEdit = function() {
   document.getElementById('question-form-container').classList.add('hidden');
   document.getElementById('questions-list-render').classList.remove('hidden');
@@ -801,108 +716,48 @@ window.saveQuestion = async function() {
   if (!qText) { alert('Введите текст вопроса!'); return; }
   if (answers.some(a => !a)) { alert('Заполните все варианты ответов!'); return; }
 
-  const payload = {
-    test_key: state.activeSubjectKey,
-    part_name: qPart,
-    q: qText,
-    a: answers,
-    c: window._tempCorrect
-  };
-
+  const payload = { test_key: state.activeSubjectKey, part_name: qPart, q: qText, a: answers, c: window._tempCorrect };
   document.getElementById('question-form-container').innerHTML = '<h3>Сохранение...</h3>';
 
-  if (state.editingQuestionId) {
-    const { error } = await supabaseClient.from('questions').update(payload).eq('id', state.editingQuestionId);
-    if (error) { alert('Ошибка сохранения'); console.error(error); }
-  } else {
-    const { error } = await supabaseClient.from('questions').insert([payload]);
-    if (error) { alert('Ошибка создания'); console.error(error); }
-  }
-  
+  if (state.editingQuestionId) await supabaseClient.from('questions').update(payload).eq('id', state.editingQuestionId);
+  else await supabaseClient.from('questions').insert([payload]);
   openSubjectManager(state.activeSubjectKey);
 };
 
-window.deleteQuestion = async function(id) {
-  if (!confirm('Точно удалить этот вопрос?')) return;
-  const { error } = await supabaseClient.from('questions').delete().eq('id', id);
-  if (error) { alert('Ошибка удаления'); console.error(error); }
-  else { openSubjectManager(state.activeSubjectKey); }
-};
-
 window.banIP = async function(ip) {
-  if (!ip || ip === 'Скрыт/VPN') { alert('Невозможно заблокировать скрытый IP.'); return; }
-  if (!confirm(`Точно заблокировать доступ для IP: ${ip} ?`)) return;
-  
-  const { error } = await supabaseClient.from('banned_ips').insert([{ ip_address: ip }]);
-  if (error) { alert('Ошибка (возможно IP уже в бане)'); }
-  else { alert('IP успешно заблокирован!'); openAdminPanel(); }
-};
-
-window.unbanIP = async function(id) {
-  if (!confirm('Снять блокировку с этого IP?')) return;
-  await supabaseClient.from('banned_ips').delete().eq('id', id);
+  if (!ip || ip === 'Скрыт/VPN') return;
+  if (!confirm(`Заблокировать IP: ${ip}?`)) return;
+  await supabaseClient.from('banned_ips').insert([{ ip_address: ip }]);
   openAdminPanel();
 };
+window.unbanIP = async function(id) { await supabaseClient.from('banned_ips').delete().eq('id', id); openAdminPanel(); };
 
 async function renderAdminPanel(users = [], results = [], accesses = [], history = [], bannedIps = [], groups = []) {
   state.adminUsers = users;
   state.adminGroups = groups;
-  
   showScreen('screen-admin');
   const isSuperadmin = state.currentUser.role === 'superadmin';
 
-  // Генерируем карточки предметов динамически
   const subjectsGrid = Object.keys(TEST_TITLES).map(key => `
     <div class="card" style="box-shadow:none; border:1px solid #d7dce3; margin-top:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; padding:15px;">
-      <div>
-        <div style="font-weight:bold; font-size:16px;">${escapeHtml(TEST_TITLES[key])}</div>
-        <div style="font-size:12px; color:#888; margin-top:4px;">Ключ: ${escapeHtml(key)}</div>
-      </div>
+      <div><div style="font-weight:bold; font-size:16px;">${escapeHtml(TEST_TITLES[key])}</div><div style="font-size:12px; color:#888;">Ключ: ${escapeHtml(key)}</div></div>
       <div style="display:flex; gap:10px; flex-wrap:wrap;">
         <button class="btn-primary" style="margin:0; padding:8px 15px; font-size:13px;" onclick="openSubjectManager('${key}')">Вопросы</button>
-        ${isSuperadmin ? `
-        <button class="btn-gray" style="margin:0; padding:8px 15px; font-size:13px;" onclick="renameSubject('${key}')">✏️ Название</button>
-        <button class="btn-bad" style="margin:0; padding:8px 15px; font-size:13px;" onclick="deleteSubject('${key}')">❌ Удалить</button>
-        ` : ''}
+        ${isSuperadmin ? `<button class="btn-gray" style="margin:0; padding:8px 15px; font-size:13px;" onclick="renameSubject('${key}')">✏️ Название</button><button class="btn-bad" style="margin:0; padding:8px 15px; font-size:13px;" onclick="deleteSubject('${key}')">❌ Удалить</button>` : ''}
       </div>
     </div>
   `).join('');
 
-  const groupsRows = groups.length ? groups.map(g => `
-      <tr>
-        <td>${escapeHtml(g.name)}</td>
-        <td>
-            <button class="btn-ok" style="padding:6px 12px; width:auto; font-size:12px; margin-right:5px;" onclick="openGroupManager('${escapeHtml(g.name)}')">👥 Состав группы</button>
-            <button class="btn-bad" style="padding:6px 12px; width:auto; font-size:12px;" onclick="deleteGroup(${g.id}, '${escapeHtml(g.name)}')">❌ Удалить</button>
-        </td>
-      </tr>
-  `).join('') : `<tr><td colspan="2">Групп пока нет</td></tr>`;
+  const groupsRows = groups.length ? groups.map(g => `<tr><td>${escapeHtml(g.name)}</td><td><button class="btn-ok" style="padding:6px 12px; width:auto; font-size:12px; margin-right:5px;" onclick="openGroupManager('${escapeHtml(g.name)}')">👥 Состав группы</button><button class="btn-bad" style="padding:6px 12px; width:auto; font-size:12px;" onclick="deleteGroup(${g.id}, '${escapeHtml(g.name)}')">❌ Удалить</button></td></tr>`).join('') : `<tr><td colspan="2">Групп пока нет</td></tr>`;
 
-  const visibleUsers = isSuperadmin 
-    ? users 
-    : users.filter(u => u.role === 'student' || u.username === state.currentUser.username);
-
+  const visibleUsers = isSuperadmin ? users : users.filter(u => u.role === 'student' || u.username === state.currentUser.username);
   const userRows = visibleUsers.length ? visibleUsers.map(user => {
-    let canDelete = false;
-    if (isSuperadmin && user.username !== state.currentUser.username) canDelete = true;
-    else if (!isSuperadmin && user.role === 'student') canDelete = true;
-    return `
-      <tr>
-        <td>${escapeHtml(user.id)}</td>
-        <td>${escapeHtml(user.username)}</td>
-        <td>${escapeHtml(user.password)}</td>
-        <td>${escapeHtml(user.role)}</td>
-        <td>${escapeHtml(user.group_name || 'Без группы')}</td>
-        <td>${canDelete ? `<button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteUser(${user.id})">❌</button>` : ''}</td>
-      </tr>
-    `;
+    let canDel = (isSuperadmin && user.username !== state.currentUser.username) || (!isSuperadmin && user.role === 'student');
+    return `<tr><td>${escapeHtml(user.id)}</td><td>${escapeHtml(user.username)}</td><td>${escapeHtml(user.password)}</td><td>${escapeHtml(user.role)}</td><td>${escapeHtml(user.group_name || 'Без группы')}</td><td>${canDel ? `<button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteUser(${user.id})">❌</button>` : ''}</td></tr>`;
   }).join('') : `<tr><td colspan="6">Пользователей пока нет</td></tr>`;
 
   let roleOptions = `<option value="student">student (Студент)</option>`;
-  if (isSuperadmin) {
-    roleOptions += `<option value="admin">admin (Обычный Админ)</option><option value="superadmin">superadmin (Главный Админ)</option>`;
-  }
-  
+  if (isSuperadmin) roleOptions += `<option value="admin">admin (Обычный Админ)</option><option value="superadmin">superadmin (Главный Админ)</option>`;
   const groupSelectOptions = `<option value="Без группы">Без группы</option>` + groups.map(g => `<option value="${escapeHtml(g.name)}">${escapeHtml(g.name)}</option>`).join('');
 
   const accessRows = accesses.length ? accesses.map(row => `
@@ -911,62 +766,50 @@ async function renderAdminPanel(users = [], results = [], accesses = [], history
         <td>${escapeHtml(getTestTitle(row.test_key))}</td>
         <td>${new Date(row.start_time).toLocaleString()}</td>
         <td>${new Date(row.end_time).toLocaleString()}</td>
+        <td><b>${row.used_attempts || 0} / ${row.max_attempts || 1}</b></td>
         <td><button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteAccess(${row.id})">❌</button></td>
       </tr>
-    `).join('') : `<tr><td colspan="5">Нет активных доступов</td></tr>`;
+    `).join('') : `<tr><td colspan="6">Нет активных доступов</td></tr>`;
 
   const completedResults = results.filter(r => r.status !== 'incomplete');
   const incompleteResults = results.filter(r => r.status === 'incomplete');
 
   const resultRows = completedResults.length ? completedResults.map(row => {
-      const baseNameMatch = row.test_name.match(/^(.*?) \(/);
-      const baseName = baseNameMatch ? baseNameMatch[1] : row.test_name;
+      const baseName = row.test_name.match(/^(.*?) \(/) ? row.test_name.match(/^(.*?) \(/)[1] : row.test_name;
       const testKey = Object.keys(TEST_TITLES).find(k => TEST_TITLES[k] === baseName) || 'unknown';
-      
       return `
       <tr class="result-row" data-filter-key="${testKey}">
+        <td><input type="checkbox" class="result-checkbox" value="${row.id}"></td>
         <td>${escapeHtml(row.id)}</td>
         <td>${escapeHtml(row.username)}</td>
         <td>${escapeHtml(row.test_name)}</td>
         <td>${escapeHtml(row.score)}/${escapeHtml(row.total)}</td>
         <td>${escapeHtml(row.percentage)}%</td>
-        <td><button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteResult(${row.id})">❌</button></td>
-      </tr>
-    `}).join('') : `<tr><td colspan="6">Завершенных результатов пока нет</td></tr>`;
+      </tr>`}).join('') : `<tr><td colspan="6">Завершенных результатов пока нет</td></tr>`;
 
   const incompleteRows = incompleteResults.length ? incompleteResults.map(row => {
-      const baseNameMatch = row.test_name.match(/^(.*?) \(/);
-      const baseName = baseNameMatch ? baseNameMatch[1] : row.test_name;
+      const baseName = row.test_name.match(/^(.*?) \(/) ? row.test_name.match(/^(.*?) \(/)[1] : row.test_name;
       const testKey = Object.keys(TEST_TITLES).find(k => TEST_TITLES[k] === baseName) || 'unknown';
-      
       return `
       <tr class="incomplete-row" data-filter-key="${testKey}">
+        <td><input type="checkbox" class="incomplete-checkbox" value="${row.id}"></td>
         <td>${escapeHtml(row.id)}</td>
         <td>${escapeHtml(row.username)}</td>
         <td>${escapeHtml(row.test_name)}</td>
         <td>${escapeHtml(row.score)} (до выхода)</td>
-        <td><button class="btn-bad" style="padding:10px; width:auto;" onclick="deleteResult(${row.id})">❌</button></td>
-      </tr>
-    `}).join('') : `<tr><td colspan="5">Незавершенных тестов нет</td></tr>`;
+      </tr>`}).join('') : `<tr><td colspan="5">Незавершенных тестов нет</td></tr>`;
 
-  const visibleHistory = isSuperadmin 
-    ? history 
-    : history.filter(h => {
+  const visibleHistory = isSuperadmin ? history : history.filter(h => {
         const u = users.find(user => user.username === h.username);
-        if (!u) return true;
-        return u.role === 'student' || h.username === state.currentUser.username;
+        return (!u) || u.role === 'student' || h.username === state.currentUser.username;
     });
 
   const historyRows = visibleHistory.length ? visibleHistory.map(row => {
-    let banBtn = '';
-    if (isSuperadmin && row.ip_address !== 'Скрыт/VPN') banBtn = `<button class="btn-bad" style="padding:4px 8px; font-size:12px; margin-left:10px; width:auto;" onclick="banIP('${escapeHtml(row.ip_address)}')">⛔ Бан</button>`;
+    let banBtn = (isSuperadmin && row.ip_address !== 'Скрыт/VPN') ? `<button class="btn-bad" style="padding:4px 8px; font-size:12px; margin-left:10px; width:auto;" onclick="banIP('${escapeHtml(row.ip_address)}')">⛔ Бан</button>` : '';
     return `<tr class="history-row" data-filter-key="${escapeHtml(row.username)}"><td>${escapeHtml(row.username)}</td><td>${escapeHtml(row.ip_address)} ${banBtn}</td><td>${new Date(row.login_time).toLocaleString()}</td></tr>`;
   }).join('') : `<tr><td colspan="3">Истории входов пока нет</td></tr>`;
 
   const bannedRows = bannedIps.length ? bannedIps.map(row => `<tr><td style="color:red; font-weight:bold;">${escapeHtml(row.ip_address)}</td><td>${new Date(row.banned_at).toLocaleString()}</td><td><button class="btn-ok" style="padding:8px 15px; width:auto;" onclick="unbanIP(${row.id})">Разблокировать</button></td></tr>`).join('') : `<tr><td colspan="3">Черный список пуст</td></tr>`;
-
-  const uniqueUsers = [...new Set(visibleHistory.map(u => u.username))];
-  const historyUserOptions = uniqueUsers.map(u => `<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`).join('');
 
   screenAdmin.innerHTML = `
     <div class="screen-top">
@@ -1022,9 +865,7 @@ async function renderAdminPanel(users = [], results = [], accesses = [], history
         <option value="">Выберите предмет для слежения...</option>
         ${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
       </select>
-      <div id="live-dashboard" class="grid" style="grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px;">
-          <!-- Карточки студентов будут появляться здесь -->
-      </div>
+      <div id="live-dashboard" class="grid" style="grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px;"></div>
     </div>
 
     <div id="tab-students" class="tab-content admin-section">
@@ -1035,34 +876,25 @@ async function renderAdminPanel(users = [], results = [], accesses = [], history
               <button class="btn-ok" style="margin:0; width:auto; padding: 0 20px;" onclick="createGroup()">Добавить</button>
           </div>
           <div class="table-wrap"><table><tr><th>Группа</th><th>Действия</th></tr>${groupsRows}</table></div>
-          
           <hr style="margin: 30px 0; border: none; border-top: 1px solid #ddd;">
-          
           <div class="card" style="box-shadow:none; margin-top:0; padding:0; margin-bottom: 20px;">
             <h2>Создать пользователя</h2>
             <input id="new-username" placeholder="Логин" autocomplete="off" />
             <input id="new-password" placeholder="Пароль" autocomplete="off" />
             <select id="new-role" onchange="document.getElementById('group-container').style.display = this.value === 'student' ? 'block' : 'none'">${roleOptions}</select>
-            <div id="group-container" style="margin-top: 10px;">
-                <select id="new-group">${groupSelectOptions}</select>
-            </div>
+            <div id="group-container" style="margin-top: 10px;"><select id="new-group">${groupSelectOptions}</select></div>
             <button class="btn-ok" style="margin-top: 15px;" onclick="createUser()">Создать</button>
           </div>
-          
           <h2>Список пользователей</h2>
           <div class="table-wrap"><table><tr><th>ID</th><th>Логин</th><th>Пароль</th><th>Роль</th><th>Группа</th><th>Удалить</th></tr>${userRows}</table></div>
       </div>
-
       <div id="group-editor-view" class="hidden">
           <button class="btn-gray" style="margin-bottom:15px; width:auto; padding: 10px 20px;" onclick="closeGroupManager()">🔙 Назад</button>
           <h2 id="group-editor-title">Состав группы</h2>
           <div id="group-members-list" class="table-wrap" style="margin-bottom:20px;"></div>
           <div class="card" style="box-shadow:none; border:1px solid #d7dce3;">
               <h3 style="margin-top:0;">Добавить студента в группу</h3>
-              <div style="display:flex; gap:10px;">
-                  <select id="add-to-group-select" style="margin:0;"></select>
-                  <button class="btn-ok" style="margin:0; width:auto; padding:0 20px;" onclick="addUserToGroup()">Добавить</button>
-              </div>
+              <div style="display:flex; gap:10px;"><select id="add-to-group-select" style="margin:0;"></select><button class="btn-ok" style="margin:0; width:auto; padding:0 20px;" onclick="addUserToGroup()">Добавить</button></div>
           </div>
       </div>
     </div>
@@ -1079,49 +911,58 @@ async function renderAdminPanel(users = [], results = [], accesses = [], history
 
         <div id="access-mode-group">
             <select id="access-group-select">${groupSelectOptions}</select>
-            <div class="muted">Доступ получат все студенты, состоящие в выбранной группе на данный момент.</div>
         </div>
 
         <div id="access-mode-individual" class="hidden">
-            <div id="students-list" class="students-list" style="max-height: 200px; overflow-y: auto; border: 1px solid #d7dce3; padding: 10px; border-radius: 8px;">Загрузка студентов...</div>
+            <div id="students-list" class="students-list" style="max-height: 200px; overflow-y: auto; border: 1px solid #d7dce3; padding: 10px; border-radius: 8px;"></div>
             <div style="margin-top:10px;">
               <button class="btn-gray" style="padding:5px 10px; font-size:12px; width:auto;" onclick="selectAllCheckboxes()">✅ Выбрать всех</button> 
               <button class="btn-gray" style="padding:5px 10px; font-size:12px; width:auto;" onclick="deselectAllCheckboxes()">❌ Снять выделение</button>
             </div>
         </div>
         
-        <label style="display:block;margin-top:20px;">Начало доступа</label><input id="access-start" type="datetime-local">
-        <label style="display:block;margin-top:15px;">Конец доступа</label><input id="access-end" type="datetime-local">
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:20px;">
+           <div style="flex:1;"><label>Начало доступа</label><input id="access-start" type="datetime-local"></div>
+           <div style="flex:1;"><label>Конец доступа</label><input id="access-end" type="datetime-local"></div>
+           <div style="flex:1;"><label>Кол-во попыток</label><input id="access-attempts" type="number" value="1" min="1"></div>
+        </div>
+        
         <button class="btn-ok" style="margin-top:15px;" onclick="grantAccess()">Открыть доступ</button>
       </div>
       <h2>Активные доступы</h2>
       <select id="filter-access" onchange="filterTableRows('access-row', this.value)" style="margin-bottom: 15px;">
         <option value="all">Все предметы</option>${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
       </select>
-      <div class="table-wrap"><table><tr><th>Студент</th><th>Предмет</th><th>Начало</th><th>Конец</th><th>Удалить</th></tr>${accessRows}</table></div>
+      <div class="table-wrap"><table><tr><th>Студент</th><th>Предмет</th><th>Начало</th><th>Конец</th><th>Попытки (Испол/Всего)</th><th>Удалить</th></tr>${accessRows}</table></div>
     </div>
     
     <div id="tab-results" class="tab-content admin-section">
-      <h2>Результаты тестов</h2>
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
+        <h2>Результаты тестов</h2>
+        <button class="btn-bad" style="width:auto; padding:8px 15px; margin-bottom:15px;" onclick="deleteSelectedResults('completed')">🗑 Удалить выбранные</button>
+      </div>
       <select id="filter-result" onchange="filterTableRows('result-row', this.value)" style="margin-bottom: 15px;">
         <option value="all">Все предметы</option>${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
       </select>
-      <div class="table-wrap"><table><tr><th>ID</th><th>Пользователь</th><th>Тест</th><th>Баллы</th><th>%</th><th>Удалить</th></tr>${resultRows}</table></div>
+      <div class="table-wrap"><table><tr><th><input type="checkbox" onchange="toggleAllCheckboxes(this, 'result-checkbox')"></th><th>ID</th><th>Пользователь</th><th>Тест</th><th>Баллы</th><th>%</th></tr>${resultRows}</table></div>
     </div>
 
     <div id="tab-incomplete" class="tab-content admin-section">
-      <h2>Незавершенные тесты (Прерванные)</h2>
-      <div class="muted" style="margin-bottom:15px;">Здесь показаны тесты, из которых студент вышел с помощью кнопки "Назад".</div>
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
+        <h2>Незавершенные тесты</h2>
+        <button class="btn-bad" style="width:auto; padding:8px 15px; margin-bottom:15px;" onclick="deleteSelectedResults('incomplete')">🗑 Удалить выбранные</button>
+      </div>
+      <div class="muted" style="margin-bottom:15px; text-align:left;">Нажатие "Пауза/Назад" во время теста тратит 1 попытку и сохраняет баллы до выхода сюда.</div>
       <select id="filter-incomplete" onchange="filterTableRows('incomplete-row', this.value)" style="margin-bottom: 15px;">
         <option value="all">Все предметы</option>${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
       </select>
-      <div class="table-wrap"><table><tr><th>ID</th><th>Пользователь</th><th>Тест</th><th>Баллы на момент выхода</th><th>Удалить</th></tr>${incompleteRows}</table></div>
+      <div class="table-wrap"><table><tr><th><input type="checkbox" onchange="toggleAllCheckboxes(this, 'incomplete-checkbox')"></th><th>ID</th><th>Пользователь</th><th>Тест</th><th>Баллы на момент выхода</th></tr>${incompleteRows}</table></div>
     </div>
 
     <div id="tab-history" class="tab-content admin-section">
       <h2>История авторизаций</h2>
       <select id="filter-history" onchange="filterTableRows('history-row', this.value)" style="margin-bottom: 15px;">
-        <option value="all">Все пользователи</option>${historyUserOptions}
+        <option value="all">Все пользователи</option>${[...new Set(visibleHistory.map(u => u.username))].map(u => `<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`).join('')}
       </select>
       <div class="table-wrap"><table><tr><th>Пользователь</th><th>IP-адрес</th><th>Время входа</th></tr>${historyRows}</table></div>
     </div>
@@ -1129,7 +970,6 @@ async function renderAdminPanel(users = [], results = [], accesses = [], history
     ${isSuperadmin ? `
     <div id="tab-blacklist" class="tab-content admin-section">
       <h2 style="color:red;">Черный список IP-адресов</h2>
-      <div class="muted" style="margin-bottom: 15px;">Заблокированные устройства не смогут войти в систему под любым логином.</div>
       <div class="table-wrap"><table><tr><th>IP-адрес</th><th>Дата блокировки</th><th>Действие</th></tr>${bannedRows}</table></div>
     </div>
     ` : ''}
@@ -1150,57 +990,26 @@ window.startLiveTracking = async function() {
 
     dashboard.innerHTML = '<div class="muted">Ожидание ответов...</div>';
     liveStats = {}; 
-
-    // Запрашиваем текущие ответы для выбранного теста
-    const { data } = await supabaseClient
-        .from('student_q_state')
-        .select('username, is_correct')
-        .eq('test_key', testKey);
+    const { data } = await supabaseClient.from('student_q_state').select('username, is_correct').eq('test_key', testKey);
     
-    if (data) {
-        data.forEach(row => updateLiveStat(row.username, row.is_correct));
-        renderLiveDashboard();
-    }
-
-    // Отключаем предыдущую подписку, если была
+    if (data) { data.forEach(row => updateLiveStat(row.username, row.is_correct)); renderLiveDashboard(); }
     if (liveSubscription) supabaseClient.removeChannel(liveSubscription);
 
-    // Подписываемся на обновления в реальном времени
-    liveSubscription = supabaseClient
-        .channel('public:student_q_state')
-        .on('postgres_changes', { 
-            event: 'INSERT', 
-            schema: 'public', 
-            table: 'student_q_state',
-            filter: `test_key=eq.${testKey}`
-        }, payload => {
-            updateLiveStat(payload.new.username, payload.new.is_correct);
-            renderLiveDashboard();
-            highlightStudent(payload.new.username);
+    liveSubscription = supabaseClient.channel('public:student_q_state')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'student_q_state', filter: `test_key=eq.${testKey}` }, payload => {
+            updateLiveStat(payload.new.username, payload.new.is_correct); renderLiveDashboard(); highlightStudent(payload.new.username);
         })
-        .on('postgres_changes', { 
-            event: 'UPDATE', 
-            schema: 'public', 
-            table: 'student_q_state',
-            filter: `test_key=eq.${testKey}`
-        }, payload => {
-            updateLiveStat(payload.new.username, payload.new.is_correct, payload.old.is_correct);
-            renderLiveDashboard();
-            highlightStudent(payload.new.username);
-        })
-        .subscribe();
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'student_q_state', filter: `test_key=eq.${testKey}` }, payload => {
+            updateLiveStat(payload.new.username, payload.new.is_correct, payload.old.is_correct); renderLiveDashboard(); highlightStudent(payload.new.username);
+        }).subscribe();
 };
 
 function updateLiveStat(username, isCorrect, oldIsCorrect = null) {
     if (!liveStats[username]) liveStats[username] = { correct: 0, wrong: 0, total: 0 };
-    
     if (oldIsCorrect !== null) {
         if (oldIsCorrect === true) liveStats[username].correct--;
         if (oldIsCorrect === false) liveStats[username].wrong--;
-    } else {
-        liveStats[username].total++;
-    }
-
+    } else { liveStats[username].total++; }
     if (isCorrect === true) liveStats[username].correct++;
     if (isCorrect === false) liveStats[username].wrong++;
 }
@@ -1208,99 +1017,69 @@ function updateLiveStat(username, isCorrect, oldIsCorrect = null) {
 function renderLiveDashboard() {
     const dashboard = document.getElementById('live-dashboard');
     if (Object.keys(liveStats).length === 0) return;
-
-    dashboard.innerHTML = Object.keys(liveStats)
-        .sort((a, b) => liveStats[b].correct - liveStats[a].correct) // Лидеры сверху
-        .map(username => {
+    dashboard.innerHTML = Object.keys(liveStats).sort((a, b) => liveStats[b].correct - liveStats[a].correct).map(username => {
             const stat = liveStats[username];
-            return `
-            <div id="live-card-${username}" class="card" style="margin-top:0; padding:15px; border:2px solid transparent; transition: border-color 0.3s; text-align: left;">
+            return `<div id="live-card-${username}" class="card" style="margin-top:0; padding:15px; border:2px solid transparent; transition: border-color 0.3s; text-align: left;">
                 <h3 style="margin:0 0 10px 0; font-size:18px;">👤 ${escapeHtml(username)}</h3>
-                <div style="font-size: 14px;">
-                    <span style="color: green; font-weight:bold;">✅ Правильных: ${stat.correct}</span><br>
-                    <span style="color: red; font-weight:bold;">❌ Ошибок: ${stat.wrong}</span><br>
-                    <span style="color: gray;">📊 Всего ответов: ${stat.correct + stat.wrong}</span>
-                </div>
-            </div>
-            `;
+                <div style="font-size: 14px;"><span style="color: green; font-weight:bold;">✅ Правильных: ${stat.correct}</span><br><span style="color: red; font-weight:bold;">❌ Ошибок: ${stat.wrong}</span><br><span style="color: gray;">📊 Всего ответов: ${stat.correct + stat.wrong}</span></div>
+            </div>`;
         }).join('');
 }
 
 function highlightStudent(username) {
     const card = document.getElementById(`live-card-${username}`);
-    if (card) {
-        card.style.borderColor = '#1368CE';
-        setTimeout(() => { card.style.borderColor = 'transparent'; }, 500);
-    }
+    if (card) { card.style.borderColor = '#1368CE'; setTimeout(() => { card.style.borderColor = 'transparent'; }, 500); }
 }
-// ----------------------------------------------------
 
 window.toggleAccessMode = function() {
     const mode = document.querySelector('input[name="access_type"]:checked').value;
-    if (mode === 'group') {
-        document.getElementById('access-mode-group').classList.remove('hidden');
-        document.getElementById('access-mode-individual').classList.add('hidden');
-    } else {
-        document.getElementById('access-mode-group').classList.add('hidden');
-        document.getElementById('access-mode-individual').classList.remove('hidden');
-    }
+    document.getElementById('access-mode-group').classList.toggle('hidden', mode !== 'group');
+    document.getElementById('access-mode-individual').classList.toggle('hidden', mode === 'group');
 }
 
 window.renderStudentsCheckboxes = function() {
   const container = document.getElementById('students-list');
   if (!container) return;
   const students = state.adminUsers.filter(u => u.role === 'student');
-  let html = '';
-  if (!students.length) { 
-      html = '<div class="muted" style="margin:0;">Студентов пока нет.</div>'; 
-  } else {
-      students.forEach(user => {
-        const grp = user.group_name && user.group_name !== 'Без группы' ? ` <span style="color:#888; font-size:12px;">[${escapeHtml(user.group_name)}]</span>` : '';
-        html += `<label class="student-item" style="display:block; margin-bottom:5px;"><input type="checkbox" value="${escapeHtml(user.username)}" class="student-checkbox"><span>${escapeHtml(user.username)}${grp}</span></label>`;
-      });
+  if (!students.length) { container.innerHTML = '<div class="muted" style="margin:0;">Студентов пока нет.</div>'; } 
+  else {
+      container.innerHTML = students.map(user => `<label class="student-item" style="display:block; margin-bottom:5px;"><input type="checkbox" value="${escapeHtml(user.username)}" class="student-checkbox"><span>${escapeHtml(user.username)} ${user.group_name !== 'Без группы' ? `<span style="color:#888; font-size:12px;">[${escapeHtml(user.group_name)}]</span>` : ''}</span></label>`).join('');
   }
-  container.innerHTML = html;
 };
 
-window.selectAllCheckboxes = function() {
-  document.querySelectorAll('.student-checkbox').forEach(cb => cb.checked = true);
-};
-
-window.deselectAllCheckboxes = function() {
-  document.querySelectorAll('.student-checkbox').forEach(cb => cb.checked = false);
-};
+window.selectAllCheckboxes = function() { document.querySelectorAll('.student-checkbox').forEach(cb => cb.checked = true); };
+window.deselectAllCheckboxes = function() { document.querySelectorAll('.student-checkbox').forEach(cb => cb.checked = false); };
 
 async function startTest(testKey, mode, partName = null) {
-  document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px; text-align:center;">⏳ Загрузка вопросов...</h2>';
+  const now = new Date().toISOString();
+  const { data: accessData } = await supabaseClient.from('test_access').select('*').eq('username', state.currentUser.username).eq('test_key', testKey).eq('is_active', true).lte('start_time', now).gte('end_time', now).single();
   
+  if (!accessData) { alert('У вас нет активного доступа к этому тесту.'); return renderSelection(); }
+  
+  const usedAttempts = accessData.used_attempts || 0;
+  const maxAttempts = accessData.max_attempts || 1;
+
+  if (mode !== 'wrong' && mode !== 'favorite') {
+      if (usedAttempts >= maxAttempts) {
+          alert('Вы исчерпали количество доступных попыток для этого теста!');
+          return renderSelection();
+      }
+      // Списываем 1 попытку при начале прохождения
+      await supabaseClient.from('test_access').update({ used_attempts: usedAttempts + 1 }).eq('id', accessData.id);
+  }
+
+  document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px; text-align:center;">⏳ Загрузка вопросов...</h2>';
   const { data: qData, error: qError } = await supabaseClient.from('questions').select('*').eq('test_key', testKey);
   if (qError || !qData || qData.length === 0) { alert('Вопросы не найдены!'); renderSelection(); return; }
   
-  const { data: sData } = await supabaseClient.from('student_q_state')
-     .select('*').eq('username', state.currentUser.username).eq('test_key', testKey);
-     
+  const { data: sData } = await supabaseClient.from('student_q_state').select('*').eq('username', state.currentUser.username).eq('test_key', testKey);
   state.qStates = {};
-  (sData || []).forEach(row => {
-      state.qStates[row.question_id] = { id: row.id, is_correct: row.is_correct, is_favorite: row.is_favorite };
-  });
+  (sData || []).forEach(row => { state.qStates[row.question_id] = { id: row.id, is_correct: row.is_correct, is_favorite: row.is_favorite }; });
 
   let filteredQs = qData;
-  if (mode === 'part' && partName) {
-      filteredQs = qData.filter(q => (q.part_name || 'Основная часть') === partName);
-      if (!filteredQs.length) { alert('В этой части нет вопросов!'); renderSelection(); return; }
-  } else if (mode === 'wrong') {
-      filteredQs = qData.filter(q => {
-          const st = state.qStates[q.id];
-          return st && st.is_correct === false;
-      });
-      if (!filteredQs.length) { alert('Отличная работа! У вас нет ошибок в этом предмете. 🎉'); renderSelection(); return; }
-  } else if (mode === 'favorite') {
-      filteredQs = qData.filter(q => {
-          const st = state.qStates[q.id];
-          return st && st.is_favorite === true;
-      });
-      if (!filteredQs.length) { alert('Вы еще не добавили ни одного вопроса в избранное!'); renderSelection(); return; }
-  }
+  if (mode === 'part' && partName) { filteredQs = qData.filter(q => (q.part_name || 'Основная часть') === partName); if (!filteredQs.length) { alert('В этой части нет вопросов!'); renderSelection(); return; } } 
+  else if (mode === 'wrong') { filteredQs = qData.filter(q => state.qStates[q.id]?.is_correct === false); if (!filteredQs.length) { alert('Отличная работа! У вас нет ошибок.'); renderSelection(); return; } } 
+  else if (mode === 'favorite') { filteredQs = qData.filter(q => state.qStates[q.id]?.is_favorite === true); if (!filteredQs.length) { alert('Избранных вопросов нет.'); renderSelection(); return; } }
 
   state.currentTestKey = testKey;
   state.currentPartName = partName; 
@@ -1320,30 +1099,16 @@ window.toggleFavorite = function() {
     let st = state.qStates[q.id] || { is_correct: null, is_favorite: false };
     st.is_favorite = !st.is_favorite; 
     state.qStates[q.id] = st;
-    
-    const btn = document.getElementById('btn-favorite');
-    btn.style.color = st.is_favorite ? '#f59e0b' : '#cbd5e1';
-    
+    document.getElementById('btn-favorite').style.color = st.is_favorite ? '#f59e0b' : '#cbd5e1';
     saveQState(q.id, st.is_correct, st.is_favorite);
     saveTestProgress(); 
 };
 
 window.saveQState = async function(qId, isCorrect, isFavorite) {
     const st = state.qStates[qId];
-    const payload = { 
-        username: state.currentUser.username, 
-        test_key: state.currentTestKey, 
-        question_id: qId, 
-        is_correct: isCorrect, 
-        is_favorite: !!isFavorite
-    };
-    
-    if (st && st.id) {
-        await supabaseClient.from('student_q_state').update(payload).eq('id', st.id);
-    } else {
-        const { data } = await supabaseClient.from('student_q_state').insert([payload]).select().single();
-        if (data) state.qStates[qId] = data; 
-    }
+    const payload = { username: state.currentUser.username, test_key: state.currentTestKey, question_id: qId, is_correct: isCorrect, is_favorite: !!isFavorite };
+    if (st && st.id) await supabaseClient.from('student_q_state').update(payload).eq('id', st.id);
+    else { const { data } = await supabaseClient.from('student_q_state').insert([payload]).select().single(); if (data) state.qStates[qId] = data; }
 };
 
 function loadQuestion() {
@@ -1355,33 +1120,22 @@ function loadQuestion() {
   const st = state.qStates[q.id] || { is_favorite: false };
 
   document.getElementById('quiz-title').innerText = getTestTitle(state.currentTestKey);
-  if (state.currentPartName && state.currentPartName !== 'Основная часть') {
-      document.getElementById('quiz-title').innerHTML += ` <span style="font-size:16px; color:#888;">(${escapeHtml(state.currentPartName)})</span>`;
-  }
+  if (state.currentPartName && state.currentPartName !== 'Основная часть') document.getElementById('quiz-title').innerHTML += ` <span style="font-size:16px; color:#888;">(${escapeHtml(state.currentPartName)})</span>`;
   
   document.getElementById('counter').innerText = `Вопрос ${state.currentIndex + 1} из ${total}`;
   document.getElementById('progress-bar').style.width = `${(state.currentIndex / total) * 100}%`;
   
-  const starColor = st.is_favorite ? '#f59e0b' : '#cbd5e1';
   document.getElementById('question').innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:flex-start;">
           <div>${escapeHtml(q.q)}</div>
-          <button id="btn-favorite" onclick="toggleFavorite()" style="background:none; border:none; font-size:28px; cursor:pointer; padding:0; margin-left:15px; outline:none; color:${starColor};" title="Добавить в избранное">
-              ★
-          </button>
-      </div>
-  `;
+          <button id="btn-favorite" onclick="toggleFavorite()" style="background:none; border:none; font-size:28px; cursor:pointer; padding:0; margin-left:15px; outline:none; color:${st.is_favorite ? '#f59e0b' : '#cbd5e1'};">★</button>
+      </div>`;
 
   const options = document.getElementById('options');
   options.innerHTML = '';
-  const shuffledOptions = shuffleArray(q.a.map((text, idx) => ({ text, correct: idx === q.c })));
-
-  shuffledOptions.forEach(item => {
+  shuffleArray(q.a.map((text, idx) => ({ text, correct: idx === q.c }))).forEach(item => {
     const btn = document.createElement('button');
-    btn.className = 'option';
-    btn.type = 'button';
-    btn.textContent = item.text;
-    btn.dataset.correct = item.correct ? '1' : '0';
+    btn.className = 'option'; btn.textContent = item.text; btn.dataset.correct = item.correct ? '1' : '0';
     btn.addEventListener('click', () => selectAnswer(btn, item.correct));
     options.appendChild(btn);
   });
@@ -1393,92 +1147,37 @@ function selectAnswer(selectedBtn, isCorrect) {
   buttons.forEach(btn => btn.disabled = true);
   buttons.forEach(btn => { if (btn.dataset.correct === '1') btn.classList.add('correct'); });
 
-  if (!isCorrect) {
-    selectedBtn.classList.add('wrong');
-    if (!state.isRepeatMode) state.wrongQuestions.push(cloneQuestion(state.questions[state.currentIndex]));
-  } else state.score++;
+  if (!isCorrect) { selectedBtn.classList.add('wrong'); if (!state.isRepeatMode) state.wrongQuestions.push(cloneQuestion(state.questions[state.currentIndex])); } 
+  else state.score++;
 
   const qId = state.questions[state.currentIndex].id;
   let st = state.qStates[qId] || { is_correct: null, is_favorite: false };
-  st.is_correct = isCorrect;
-  state.qStates[qId] = st;
+  st.is_correct = isCorrect; state.qStates[qId] = st;
   saveQState(qId, isCorrect, st.is_favorite);
 
   saveTestProgress(true); 
   document.getElementById('next-btn').classList.remove('hidden');
 }
 
-function nextQuestion() {
-  state.currentIndex++;
-  if (state.currentIndex < state.questions.length) loadQuestion();
-  else finishQuiz();
-}
+function nextQuestion() { state.currentIndex++; if (state.currentIndex < state.questions.length) loadQuestion(); else finishQuiz(); }
 
 async function saveResult(status = 'completed') {
   const total = state.questions.length || 1;
   const percentage = Number(((state.score / total) * 100).toFixed(2));
-  
   let testName = getTestTitle(state.currentTestKey);
-  if (state.currentPartName && state.currentPartName !== 'Основная часть') {
-      testName += ` (${state.currentPartName})`;
-  }
-
-  await supabaseClient.from('results').insert([{ 
-      username: state.currentUser.username, 
-      test_name: testName, 
-      score: state.score, 
-      total: state.questions.length, 
-      percentage: percentage,
-      status: status
-  }]);
+  if (state.currentPartName && state.currentPartName !== 'Основная часть') testName += ` (${state.currentPartName})`;
+  await supabaseClient.from('results').insert([{ username: state.currentUser.username, test_name: testName, score: state.score, total: state.questions.length, percentage: percentage, status: status }]);
 }
 
-async function finishQuiz() {
-  clearTestProgress(); 
-  if (!state.isRepeatMode) await saveResult('completed');
-  renderResult();
-}
-
-function repeatWrong() {
-  state.isRepeatMode = true;
-  state.questions = shuffleArray(state.wrongQuestions.map(cloneQuestion));
-  state.currentIndex = 0;
-  state.score = 0;
-  saveTestProgress(false);
-  renderQuizShell();
-  loadQuestion();
-}
-
-function backToSelection() {
-  state.currentTestKey = null;
-  state.currentPartName = null;
-  state.questions = [];
-  state.currentIndex = 0;
-  state.score = 0;
-  clearTestProgress();
-  renderSelection();
-}
-
-function logout(force = false) {
-  if (!force && !confirm('Вы уверены, что хотите выйти из системы?')) return;
-  if (sessionCheckInterval) clearInterval(sessionCheckInterval);
-  clearSavedUser();
-  clearTestProgress();
-  state.currentUser = null;
-  state.currentTestKey = null;
-  state.currentPartName = null;
-  state.questions = [];
-  state.currentIndex = 0;
-  state.score = 0;
-  state.wrongQuestions = [];
-  state.isRepeatMode = false;
-  renderLogin();
-}
+async function finishQuiz() { clearTestProgress(); if (!state.isRepeatMode) await saveResult('completed'); renderResult(); }
+function backToSelection() { state.currentTestKey = null; state.currentPartName = null; state.questions = []; state.currentIndex = 0; state.score = 0; clearTestProgress(); renderSelection(); }
+function logout(force = false) { if (!force && !confirm('Вы уверены, что хотите выйти из системы?')) return; if (sessionCheckInterval) clearInterval(sessionCheckInterval); clearSavedUser(); clearTestProgress(); location.reload(); }
 
 async function grantAccess() {
   const testKey = document.getElementById('access-test').value;
   const startRaw = document.getElementById('access-start').value;
   const endRaw = document.getElementById('access-end').value;
+  const maxAttempts = parseInt(document.getElementById('access-attempts').value) || 1;
 
   if (!startRaw || !endRaw) { alert('Заполните поля даты и времени'); return; }
 
@@ -1487,8 +1186,7 @@ async function grantAccess() {
 
   if (mode === 'group') {
       const selectedGroup = document.getElementById('access-group-select').value;
-      const usersInGroup = state.adminUsers.filter(u => u.role === 'student' && u.group_name === selectedGroup);
-      usernames = usersInGroup.map(u => u.username);
+      usernames = state.adminUsers.filter(u => u.role === 'student' && u.group_name === selectedGroup).map(u => u.username);
       if(usernames.length === 0) return alert('В выбранной группе нет студентов!');
   } else {
       usernames = [...document.querySelectorAll('.student-checkbox:checked')].map(cb => cb.value);
@@ -1500,9 +1198,9 @@ async function grantAccess() {
 
   for (const username of usernames) {
     await supabaseClient.from('test_access').delete().eq('username', username).eq('test_key', testKey);
-    await supabaseClient.from('test_access').insert([{ username, test_key: testKey, start_time: start, end_time: end, is_active: true }]);
+    await supabaseClient.from('test_access').insert([{ username, test_key: testKey, start_time: start, end_time: end, is_active: true, max_attempts: maxAttempts, used_attempts: 0 }]);
   }
-  alert(`Доступ успешно открыт для ${usernames.length} студентов`);
+  alert(`Доступ (Попыток: ${maxAttempts}) открыт для ${usernames.length} студентов`);
   await openAdminPanel();
 }
 
@@ -1510,126 +1208,65 @@ async function createUser() {
   const username = document.getElementById('new-username').value.trim();
   const password = document.getElementById('new-password').value.trim();
   const role = document.getElementById('new-role').value;
+  let groupName = role === 'student' ? document.getElementById('new-group').value : 'Без группы';
   
-  let groupName = 'Без группы';
-  if (role === 'student') {
-      groupName = document.getElementById('new-group').value;
-  }
-
   if (!username || !password) { alert('Заполните логин и пароль'); return; }
   const { error } = await supabaseClient.from('users').insert([{ username, password, role, group_name: groupName }]);
   if (error) alert('Ошибка создания пользователя (возможно логин занят)');
   else { alert('Пользователь создан'); await openAdminPanel(); }
 }
-
-async function deleteUser(id) {
-  if (!confirm('Удалить пользователя?')) return;
-  await supabaseClient.from('users').delete().eq('id', id);
-  await openAdminPanel();
-}
-
-async function deleteAccess(id) {
-  if (!confirm('Удалить доступ?')) return;
-  await supabaseClient.from('test_access').delete().eq('id', id);
-  await openAdminPanel();
-}
-
-async function deleteResult(id) {
-  if (!confirm('Удалить результат?')) return;
-  await supabaseClient.from('results').delete().eq('id', id);
-  await openAdminPanel();
-}
+async function deleteUser(id) { if (!confirm('Удалить пользователя?')) return; await supabaseClient.from('users').delete().eq('id', id); await openAdminPanel(); }
+async function deleteAccess(id) { if (!confirm('Удалить доступ?')) return; await supabaseClient.from('test_access').delete().eq('id', id); await openAdminPanel(); }
+async function deleteResult(id) { if (!confirm('Удалить результат?')) return; await supabaseClient.from('results').delete().eq('id', id); await openAdminPanel(); }
 
 async function openAdminPanel() {
   showScreen('screen-admin');
-  
-  // Дожидаемся обновления словаря предметов
   await syncSubjects();
-  
   const now = new Date().toISOString();
   await supabaseClient.from('test_access').delete().lt('end_time', now);
-
   const [usersRes, resultsRes, accessRes, historyRes, bannedRes, groupsRes] = await Promise.all([
-    supabaseClient.from('users').select('*').order('id', { ascending: true }),
-    supabaseClient.from('results').select('*').order('id', { ascending: false }),
-    supabaseClient.from('test_access').select('*').gte('end_time', now).order('id', { ascending: false }),
-    supabaseClient.from('login_history').select('*').order('login_time', { ascending: false }).limit(200),
-    supabaseClient.from('banned_ips').select('*').order('banned_at', { ascending: false }),
-    supabaseClient.from('groups').select('*').order('name', { ascending: true })
+    supabaseClient.from('users').select('*').order('id', { ascending: true }), supabaseClient.from('results').select('*').order('id', { ascending: false }),
+    supabaseClient.from('test_access').select('*').gte('end_time', now).order('id', { ascending: false }), supabaseClient.from('login_history').select('*').order('login_time', { ascending: false }).limit(200),
+    supabaseClient.from('banned_ips').select('*').order('banned_at', { ascending: false }), supabaseClient.from('groups').select('*').order('name', { ascending: true })
   ]);
-
-  renderAdminPanel(
-    usersRes.data || [], 
-    resultsRes.data || [], 
-    accessRes.data || [], 
-    historyRes.data || [],
-    bannedRes.data || [],
-    groupsRes.data || []
-  );
+  renderAdminPanel(usersRes.data || [], resultsRes.data || [], accessRes.data || [], historyRes.data || [], bannedRes.data || [], groupsRes.data || []);
 }
 
 function filterTableRows(rowClassName, selectedKey) {
-  document.querySelectorAll('.' + rowClassName).forEach(row => {
-    row.style.display = (selectedKey === 'all' || row.dataset.filterKey === selectedKey) ? '' : 'none';
-  });
+  document.querySelectorAll('.' + rowClassName).forEach(row => { row.style.display = (selectedKey === 'all' || row.dataset.filterKey === selectedKey) ? '' : 'none'; });
 }
 
 async function init() {
   if (typeof supabase === 'undefined') {
       const loginScreen = document.getElementById('screen-login');
-      if(loginScreen) {
-          loginScreen.classList.remove('hidden');
-          loginScreen.innerHTML = '<h2 style="color:#dc3545; padding:30px; text-align:center;">❌ Ошибка: База данных не загрузилась.</h2>';
-      }
+      if(loginScreen) { loginScreen.classList.remove('hidden'); loginScreen.innerHTML = '<h2 style="color:#dc3545; padding:30px; text-align:center;">❌ Ошибка: База данных не загрузилась.</h2>'; }
       return;
   }
-
   const savedUserStr = localStorage.getItem('user');
   if (savedUserStr) {
     try {
       const parsed = JSON.parse(savedUserStr);
-      
       if (parsed.loginTimestamp && (Date.now() - parsed.loginTimestamp > SESSION_LIMIT_MS)) {
-          localStorage.removeItem('user');
-          clearTestProgress();
-          alert('Время сессии (5 часов) истекло. Пожалуйста, войдите заново.');
-          renderLogin();
-          return;
+          localStorage.removeItem('user'); clearTestProgress(); alert('Время сессии истекло.'); renderLogin(); return;
       }
-
       state.currentUser = parsed;
       if (sessionCheckInterval) clearInterval(sessionCheckInterval);
       sessionCheckInterval = setInterval(securityCheck, 15000);
 
-      if (parsed.role === 'admin' || parsed.role === 'superadmin') {
-          openAdminPanel();
-      } else {
+      if (parsed.role === 'admin' || parsed.role === 'superadmin') { openAdminPanel(); } 
+      else {
           const savedProgressStr = localStorage.getItem('test_progress');
           if (savedProgressStr) {
               try {
                   const prog = JSON.parse(savedProgressStr);
-                  
-                  await syncSubjects(); // Нужно подгрузить названия
-                  
-                  state.currentTestKey = prog.currentTestKey;
-                  state.currentPartName = prog.currentPartName || null;
-                  state.questions = prog.questions;
-                  state.currentIndex = prog.currentIndex;
-                  state.score = prog.score;
-                  state.wrongQuestions = prog.wrongQuestions;
-                  state.isRepeatMode = prog.isRepeatMode;
-                  state.qStates = prog.qStates || {};
-
-                  if (state.currentIndex >= state.questions.length) {
-                      finishQuiz();
-                  } else {
-                      renderQuizShell();
-                      loadQuestion();
-                  }
+                  await syncSubjects();
+                  state.currentTestKey = prog.currentTestKey; state.currentPartName = prog.currentPartName || null;
+                  state.questions = prog.questions; state.currentIndex = prog.currentIndex; state.score = prog.score;
+                  state.wrongQuestions = prog.wrongQuestions; state.isRepeatMode = prog.isRepeatMode; state.qStates = prog.qStates || {};
+                  if (state.currentIndex >= state.questions.length) finishQuiz();
+                  else { renderQuizShell(); loadQuestion(); }
                   return;
-              } catch (e) {
-                  clearTestProgress();
-              }
+              } catch (e) { clearTestProgress(); }
           }
           renderSelection();
       }
