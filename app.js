@@ -30,6 +30,10 @@ const state = {
     adminQuestions: [],
     adminUsers: [],
     adminGroups: [],
+    adminResults: [],
+    adminAccesses: [],
+    adminHistory: [],
+    adminBannedIps: [],
     activeSubjectKey: null,
     editingQuestionId: null,
     activeGroupManager: null
@@ -62,6 +66,16 @@ function escapeHtml(value) {
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&#39;');
+}
+
+// Безопасная подстановка значения внутрь одинарных кавычек в inline
+// onclick="...('...')". escapeHtml() одна не спасает: браузер сначала
+// декодирует HTML-сущности атрибута, а затем то, что получилось,
+// выполняется как JS. Поэтому сперва экранируем спецсимволы JS-строки,
+// и только потом — HTML-сущности самого атрибута.
+function jsAttr(value) {
+    const escapedForJs = String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return escapeHtml(escapedForJs);
 }
 
 function cloneQuestion(q) {
@@ -128,13 +142,15 @@ async function getIPAddress() {
 async function securityCheck() {
     if (!state.currentUser || state.currentUser.role === 'admin' || state.currentUser.role === 'superadmin') return;
 
-    const { data: userData } = await supabaseClient
+    const { data: userData, error: userError } = await supabaseClient
         .from('users')
         .select('session_token')
         .eq('id', state.currentUser.id)
         .single();
 
-    if (userData && userData.session_token !== state.currentUser.session_token) {
+    // Реагируем только на явное расхождение токенов. Сетевая ошибка/таймаут
+    // (например, сразу после обновления страницы) не должны разлогинивать.
+    if (!userError && userData && userData.session_token !== state.currentUser.session_token) {
         alert('⚠️ Ваш аккаунт был использован на другом устройстве. Выполнен автоматический выход.');
         window.logout(true);
         return;
@@ -142,7 +158,7 @@ async function securityCheck() {
 
     if (state.currentTestKey && !state.isRepeatMode) {
         const now = new Date().toISOString();
-        const { data: accessData } = await supabaseClient
+        const { data: accessData, error: accessError } = await supabaseClient
             .from('test_access')
             .select('id')
             .eq('username', state.currentUser.username)
@@ -151,7 +167,9 @@ async function securityCheck() {
             .lte('start_time', now)
             .gte('end_time', now);
 
-        if (!accessData || accessData.length === 0) {
+        // Прерываем тест только если запрос точно выполнился и доступа
+        // действительно нет. При ошибке — просто повторим через 15 секунд.
+        if (!accessError && (!accessData || accessData.length === 0)) {
             alert('⛔ Администратор закрыл вам доступ к этому тесту (или вышло время). Тест прерван.');
             clearTestProgress();
             window.backToSelection();
@@ -217,7 +235,7 @@ async function handleLogin() {
         return; 
     }
 
-    const sessionToken = Math.random().toString(36).substring(2, 15);
+    const sessionToken = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).substring(2, 15));
     await supabaseClient.from('users').update({ session_token: sessionToken }).eq('id', data.id);
     await supabaseClient.from('login_history').insert([{ username: data.username, ip_address: userIP }]);
 
@@ -305,7 +323,7 @@ window.renderSelection = async function() {
     }
     
     const testKeys = data.map(d => d.test_key);
-    const { data: qData } = await supabaseClient.from('questions').select('test_key, part_name').in('test_key', testKeys);
+    const { data: qData } = await supabaseClient.from('test_parts_summary').select('test_key, part_name').in('test_key', testKeys);
     
     const partsMap = {};
     testKeys.forEach(k => partsMap[k] = new Set());
@@ -327,11 +345,11 @@ window.renderSelection = async function() {
             attemptsBadge = `<div style="font-size:13px; margin-bottom:10px; color:${isExhausted ? 'var(--bad)' : 'var(--ok)'};"><b>Попыток: ${used} из ${max}</b></div>`;
         }
 
-        let partsButtons = `<button class="btn-ok" style="margin:0; margin-bottom:5px; width:auto; padding:8px 15px; font-size:13px;" onclick="window.startTest('${test.test_key}', 'all')">▶️ Полный тест</button>`;
+        let partsButtons = `<button class="btn-ok" style="margin:0; margin-bottom:5px; width:auto; padding:8px 15px; font-size:13px;" onclick="window.startTest('${jsAttr(test.test_key)}', 'all')">▶️ Полный тест</button>`;
         
         if (parts.length > 1 || (parts.length === 1 && parts[0] !== 'Основная часть')) {
             partsButtons += ' ' + parts.map(p => 
-                `<button class="btn-primary" style="margin:0; margin-bottom:5px; width:auto; padding:8px 15px; font-size:13px; background:#3b82f6;" onclick="window.startTest('${test.test_key}', 'part', '${escapeHtml(p)}')">▶️ ${escapeHtml(p)}</button>`
+                `<button class="btn-primary" style="margin:0; margin-bottom:5px; width:auto; padding:8px 15px; font-size:13px; background:#3b82f6;" onclick="window.startTest('${jsAttr(test.test_key)}', 'part', '${jsAttr(p)}')">▶️ ${escapeHtml(p)}</button>`
             ).join(' ');
         }
 
@@ -347,8 +365,8 @@ window.renderSelection = async function() {
                 ${partsButtons}
             </div>
             <div style="display:flex; gap:10px; flex-wrap:wrap; border-top: 1px solid #eee; padding-top: 10px;">
-                <button class="btn-bad" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="window.startTest('${test.test_key}', 'wrong')">❌ Ошибки</button>
-                <button class="btn-gray" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="window.startTest('${test.test_key}', 'favorite')">⭐ Избранные</button>
+                <button class="btn-bad" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="window.startTest('${jsAttr(test.test_key)}', 'wrong')">❌ Ошибки</button>
+                <button class="btn-gray" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="window.startTest('${jsAttr(test.test_key)}', 'favorite')">⭐ Избранные</button>
             </div>
         </div>
         `; 
@@ -401,14 +419,7 @@ window.startTest = async function(testKey, mode, partName = null) {
     }
 
     document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px; text-align:center;">⏳ Загрузка вопросов...</h2>';
-    
-    const { data: qData, error: qError } = await supabaseClient.from('questions').select('*').eq('test_key', testKey);
-    if (qError || !qData || qData.length === 0) { 
-        alert('Вопросы не найдены!'); 
-        window.renderSelection(); 
-        return; 
-    }
-    
+
     const { data: sData } = await supabaseClient.from('student_q_state')
         .select('*')
         .eq('username', state.currentUser.username)
@@ -419,16 +430,37 @@ window.startTest = async function(testKey, mode, partName = null) {
         state.qStates[row.question_id] = { id: row.id, is_correct: row.is_correct, is_favorite: row.is_favorite }; 
     });
 
-    let filteredQs = qData;
-    if (mode === 'part' && partName) { 
-        filteredQs = qData.filter(q => (q.part_name || 'Основная часть') === partName); 
-        if (!filteredQs.length) { alert('В этой части нет вопросов!'); window.renderSelection(); return; } 
-    } else if (mode === 'wrong') { 
-        filteredQs = qData.filter(q => state.qStates[q.id]?.is_correct === false); 
-        if (!filteredQs.length) { alert('Отличная работа! У вас нет ошибок.'); window.renderSelection(); return; } 
-    } else if (mode === 'favorite') { 
-        filteredQs = qData.filter(q => state.qStates[q.id]?.is_favorite === true); 
-        if (!filteredQs.length) { alert('Избранных вопросов нет.'); window.renderSelection(); return; } 
+    let filteredQs;
+    if (mode === 'wrong' || mode === 'favorite') {
+        // Знаем конкретные question_id заранее — тянем только их,
+        // а не весь банк вопросов теста (может быть сотни строк).
+        const wantedIds = Object.keys(state.qStates)
+            .filter(qid => mode === 'wrong' ? state.qStates[qid].is_correct === false : state.qStates[qid].is_favorite === true)
+            .map(Number);
+
+        if (!wantedIds.length) {
+            alert(mode === 'wrong' ? 'Отличная работа! У вас нет ошибок.' : 'Избранных вопросов нет.');
+            window.renderSelection();
+            return;
+        }
+
+        const { data, error } = await supabaseClient.from('questions').select('*').in('id', wantedIds);
+        if (error || !data || !data.length) { alert('Вопросы не найдены!'); window.renderSelection(); return; }
+        filteredQs = data;
+    } else {
+        const { data: qData, error: qError } = await supabaseClient.from('questions').select('*').eq('test_key', testKey);
+        if (qError || !qData || qData.length === 0) { 
+            alert('Вопросы не найдены!'); 
+            window.renderSelection(); 
+            return; 
+        }
+
+        if (mode === 'part' && partName) {
+            filteredQs = qData.filter(q => (q.part_name || 'Основная часть') === partName);
+            if (!filteredQs.length) { alert('В этой части нет вопросов!'); window.renderSelection(); return; }
+        } else {
+            filteredQs = qData;
+        }
     }
 
     state.currentTestKey = testKey;
@@ -588,6 +620,7 @@ async function saveResult(status = 'completed') {
     await supabaseClient.from('results').insert([{ 
         username: state.currentUser.username, 
         test_name: testName, 
+        test_key: state.currentTestKey,
         score: state.score, 
         total: state.questions.length, 
         percentage: percentage, 
@@ -700,14 +733,14 @@ window.createGroup = async function() {
     if (!groupName) return alert('Введите название группы');
     const { error } = await supabaseClient.from('groups').insert([{ name: groupName }]);
     if (error) alert('Ошибка создания (группа уже существует)');
-    else openAdminPanel();
+    else await refreshAdminSlice(['groups']);
 };
 
 window.deleteGroup = async function(id, name) {
     if (!confirm(`Удалить группу "${name}"? Студенты будут переведены в "Без группы".`)) return;
     await supabaseClient.from('users').update({ group_name: 'Без группы' }).eq('group_name', name);
     await supabaseClient.from('groups').delete().eq('id', id);
-    openAdminPanel();
+    await refreshAdminSlice(['users', 'groups']);
 };
 
 window.openGroupManager = function(groupName) {
@@ -737,13 +770,13 @@ window.addUserToGroup = async function() {
     const userId = document.getElementById('add-to-group-select').value;
     if (!userId) return alert('Выберите студента');
     await supabaseClient.from('users').update({ group_name: state.activeGroupManager }).eq('id', userId);
-    await openAdminPanel(); 
+    await refreshAdminSlice(['users']);
 };
 
 window.removeUserFromGroup = async function(userId) {
     if (!confirm('Исключить студента из группы?')) return;
     await supabaseClient.from('users').update({ group_name: 'Без группы' }).eq('id', userId);
-    await openAdminPanel();
+    await refreshAdminSlice(['users']);
 };
 
 
@@ -853,7 +886,7 @@ window.deleteSelectedResults = async function(tableNameType) {
         console.error(error);
         document.getElementById(targetTab).style.opacity = '1'; 
     } else {
-        openAdminPanel();
+        await refreshAdminSlice(['results']);
     }
 };
 
@@ -1093,7 +1126,7 @@ function renderLiveDashboard() {
     dashboard.innerHTML = Object.keys(liveStats).sort((a, b) => liveStats[b].correct - liveStats[a].correct).map(username => {
         const stat = liveStats[username];
         return `
-            <div id="live-card-${username}" class="card" style="margin-top:0; padding:15px; border:2px solid transparent; transition: border-color 0.3s; text-align: left;">
+            <div id="live-card-${escapeHtml(username)}" class="card" style="margin-top:0; padding:15px; border:2px solid transparent; transition: border-color 0.3s; text-align: left;">
                 <h3 style="margin:0 0 10px 0; font-size:18px;">👤 ${escapeHtml(username)}</h3>
                 <div style="font-size: 14px;">
                     <span style="color: green; font-weight:bold;">✅ Правильных: ${stat.correct}</span><br>
@@ -1120,12 +1153,12 @@ window.banIP = async function(ip) {
     if (!ip || ip === 'Скрыт/VPN') return;
     if (!confirm(`Заблокировать IP: ${ip}?`)) return;
     await supabaseClient.from('banned_ips').insert([{ ip_address: ip }]);
-    openAdminPanel();
+    await refreshAdminSlice(['bannedIps']);
 };
 
 window.unbanIP = async function(id) { 
     await supabaseClient.from('banned_ips').delete().eq('id', id); 
-    openAdminPanel(); 
+    await refreshAdminSlice(['bannedIps']);
 };
 
 window.toggleAccessMode = function() {
@@ -1178,30 +1211,29 @@ window.grantAccess = async function() {
     const start = new Date(startRaw).toISOString();
     const end = new Date(endRaw).toISOString();
 
-    for (const username of usernames) {
-        await supabaseClient.from('test_access').delete().eq('username', username).eq('test_key', testKey);
-        
-        const payload = { 
-            username, 
-            test_key: testKey, 
-            start_time: start, 
-            end_time: end, 
-            is_active: true, 
-            max_attempts: maxAttempts, 
-            used_attempts: 0 
-        };
-        
-        const { error } = await supabaseClient.from('test_access').insert([payload]);
-        if (error) {
-            // Защита, если пользователь еще не добавил колонки attempts в SQL
-            delete payload.max_attempts;
-            delete payload.used_attempts;
-            await supabaseClient.from('test_access').insert([payload]);
-        }
+    // Было: 2 запроса на КАЖДОГО студента последовательно (delete+insert).
+    // Стало: 1 delete + 1 insert на всю группу разом.
+    await supabaseClient.from('test_access').delete().eq('test_key', testKey).in('username', usernames);
+
+    const payloads = usernames.map(username => ({
+        username,
+        test_key: testKey,
+        start_time: start,
+        end_time: end,
+        is_active: true,
+        max_attempts: maxAttempts,
+        used_attempts: 0
+    }));
+
+    const { error } = await supabaseClient.from('test_access').insert(payloads);
+    if (error) {
+        // Защита, если в базе еще нет колонок attempts
+        const legacyPayloads = payloads.map(({ max_attempts, used_attempts, ...rest }) => rest);
+        await supabaseClient.from('test_access').insert(legacyPayloads);
     }
     
     alert(`Доступ открыт для ${usernames.length} студентов`);
-    await openAdminPanel();
+    await refreshAdminSlice(['accesses']);
 };
 
 window.createUser = async function() {
@@ -1217,26 +1249,26 @@ window.createUser = async function() {
         alert('Ошибка создания пользователя (возможно логин занят)');
     } else { 
         alert('Пользователь создан'); 
-        await openAdminPanel(); 
+        await refreshAdminSlice(['users']);
     }
 };
 
 window.deleteUser = async function(id) { 
     if (!confirm('Удалить пользователя?')) return; 
     await supabaseClient.from('users').delete().eq('id', id); 
-    await openAdminPanel(); 
+    await refreshAdminSlice(['users']);
 };
 
 window.deleteAccess = async function(id) { 
     if (!confirm('Удалить доступ?')) return; 
     await supabaseClient.from('test_access').delete().eq('id', id); 
-    await openAdminPanel(); 
+    await refreshAdminSlice(['accesses']);
 };
 
 window.deleteResult = async function(id) { 
     if (!confirm('Удалить этот результат?')) return; 
     await supabaseClient.from('results').delete().eq('id', id); 
-    await openAdminPanel(); 
+    await refreshAdminSlice(['results']);
 };
 
 window.filterTableRows = function(rowClassName, selectedKey) {
@@ -1261,19 +1293,45 @@ async function openAdminPanel() {
         supabaseClient.from('groups').select('*').order('name', { ascending: true })
     ]);
     
-    renderAdminPanel(
-        usersRes.data || [], 
-        resultsRes.data || [], 
-        accessRes.data || [], 
-        historyRes.data || [], 
-        bannedRes.data || [], 
-        groupsRes.data || []
-    );
+    state.adminUsers = usersRes.data || [];
+    state.adminResults = resultsRes.data || [];
+    state.adminAccesses = accessRes.data || [];
+    state.adminHistory = historyRes.data || [];
+    state.adminBannedIps = bannedRes.data || [];
+    state.adminGroups = groupsRes.data || [];
+
+    renderAdminPanel();
 }
 
-function renderAdminPanel(users = [], results = [], accesses = [], history = [], bannedIps = [], groups = []) {
-    state.adminUsers = users;
-    state.adminGroups = groups;
+// Точечное обновление одного или нескольких срезов данных админ-панели,
+// без повторной загрузки всего остального (users/results/accesses/history/
+// bannedIps/groups). Использует ту же логику запросов, что openAdminPanel.
+async function refreshAdminSlice(keys) {
+    const now = new Date().toISOString();
+    const fetchers = {
+        users: () => supabaseClient.from('users').select('*').order('id', { ascending: true }),
+        results: () => supabaseClient.from('results').select('*').order('id', { ascending: false }),
+        accesses: () => supabaseClient.from('test_access').select('*').gte('end_time', now).order('id', { ascending: false }),
+        history: () => supabaseClient.from('login_history').select('*').order('login_time', { ascending: false }).limit(200),
+        bannedIps: () => supabaseClient.from('banned_ips').select('*').order('banned_at', { ascending: false }),
+        groups: () => supabaseClient.from('groups').select('*').order('name', { ascending: true })
+    };
+    const stateKeyMap = {
+        users: 'adminUsers', results: 'adminResults', accesses: 'adminAccesses',
+        history: 'adminHistory', bannedIps: 'adminBannedIps', groups: 'adminGroups'
+    };
+    const responses = await Promise.all(keys.map(k => fetchers[k]()));
+    keys.forEach((k, i) => { state[stateKeyMap[k]] = responses[i].data || []; });
+    renderAdminPanel();
+}
+
+function renderAdminPanel() {
+    const users = state.adminUsers;
+    const results = state.adminResults;
+    const accesses = state.adminAccesses;
+    const history = state.adminHistory;
+    const bannedIps = state.adminBannedIps;
+    const groups = state.adminGroups;
     showScreen('screen-admin');
     
     const isSuperadmin = state.currentUser.role === 'superadmin';
@@ -1285,10 +1343,10 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
                 <div style="font-size:12px; color:#888;">Ключ: ${escapeHtml(key)}</div>
             </div>
             <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                <button class="btn-primary" style="margin:0; padding:8px 15px; font-size:13px;" onclick="window.openSubjectManager('${key}')">Вопросы</button>
+                <button class="btn-primary" style="margin:0; padding:8px 15px; font-size:13px;" onclick="window.openSubjectManager('${jsAttr(key)}')">Вопросы</button>
                 ${isSuperadmin ? `
-                <button class="btn-gray" style="margin:0; padding:8px 15px; font-size:13px;" onclick="window.renameSubject('${key}')">✏️ Название</button>
-                <button class="btn-bad" style="margin:0; padding:8px 15px; font-size:13px;" onclick="window.deleteSubject('${key}')">❌ Удалить</button>
+                <button class="btn-gray" style="margin:0; padding:8px 15px; font-size:13px;" onclick="window.renameSubject('${jsAttr(key)}')">✏️ Название</button>
+                <button class="btn-bad" style="margin:0; padding:8px 15px; font-size:13px;" onclick="window.deleteSubject('${jsAttr(key)}')">❌ Удалить</button>
                 ` : ''}
             </div>
         </div>
@@ -1298,8 +1356,8 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
         <tr>
             <td>${escapeHtml(g.name)}</td>
             <td>
-                <button class="btn-ok" style="padding:6px 12px; width:auto; font-size:12px; margin-right:5px;" onclick="window.openGroupManager('${escapeHtml(g.name)}')">👥 Состав группы</button>
-                <button class="btn-bad" style="padding:6px 12px; width:auto; font-size:12px;" onclick="window.deleteGroup(${g.id}, '${escapeHtml(g.name)}')">❌ Удалить</button>
+                <button class="btn-ok" style="padding:6px 12px; width:auto; font-size:12px; margin-right:5px;" onclick="window.openGroupManager('${jsAttr(g.name)}')">👥 Состав группы</button>
+                <button class="btn-bad" style="padding:6px 12px; width:auto; font-size:12px;" onclick="window.deleteGroup(${g.id}, '${jsAttr(g.name)}')">❌ Удалить</button>
             </td>
         </tr>
     `).join('') : `<tr><td colspan="2">Групп пока нет</td></tr>`;
@@ -1324,7 +1382,7 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
     const groupSelectOptions = `<option value="Без группы">Без группы</option>` + groups.map(g => `<option value="${escapeHtml(g.name)}">${escapeHtml(g.name)}</option>`).join('');
 
     const accessRows = accesses.length ? accesses.map(row => `
-        <tr class="access-row" data-filter-key="${row.test_key}">
+        <tr class="access-row" data-filter-key="${escapeHtml(row.test_key)}">
             <td>${escapeHtml(row.username)}</td>
             <td>${escapeHtml(getTestTitle(row.test_key))}</td>
             <td>${new Date(row.start_time).toLocaleString()}</td>
@@ -1337,11 +1395,18 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
     const completedResults = results.filter(r => r.status !== 'incomplete');
     const incompleteResults = results.filter(r => r.status === 'incomplete');
 
-    const resultRows = completedResults.length ? completedResults.map(row => {
+    // Новые результаты хранят test_key напрямую; старые (до этого поля)
+    // определяем по названию теста, как и раньше.
+    const resolveResultTestKey = (row) => {
+        if (row.test_key) return row.test_key;
         const baseName = row.test_name.match(/^(.*?) \(/) ? row.test_name.match(/^(.*?) \(/)[1] : row.test_name;
-        const testKey = Object.keys(TEST_TITLES).find(k => TEST_TITLES[k] === baseName) || 'unknown';
+        return Object.keys(TEST_TITLES).find(k => TEST_TITLES[k] === baseName) || 'unknown';
+    };
+
+    const resultRows = completedResults.length ? completedResults.map(row => {
+        const testKey = resolveResultTestKey(row);
         return `
-        <tr class="result-row" data-filter-key="${testKey}">
+        <tr class="result-row" data-filter-key="${escapeHtml(testKey)}">
             <td><input type="checkbox" class="result-checkbox" value="${row.id}"></td>
             <td>${escapeHtml(row.id)}</td>
             <td>${escapeHtml(row.username)}</td>
@@ -1353,10 +1418,9 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
     }).join('') : `<tr><td colspan="7">Завершенных результатов пока нет</td></tr>`;
 
     const incompleteRows = incompleteResults.length ? incompleteResults.map(row => {
-        const baseName = row.test_name.match(/^(.*?) \(/) ? row.test_name.match(/^(.*?) \(/)[1] : row.test_name;
-        const testKey = Object.keys(TEST_TITLES).find(k => TEST_TITLES[k] === baseName) || 'unknown';
+        const testKey = resolveResultTestKey(row);
         return `
-        <tr class="incomplete-row" data-filter-key="${testKey}">
+        <tr class="incomplete-row" data-filter-key="${escapeHtml(testKey)}">
             <td><input type="checkbox" class="incomplete-checkbox" value="${row.id}"></td>
             <td>${escapeHtml(row.id)}</td>
             <td>${escapeHtml(row.username)}</td>
@@ -1372,7 +1436,7 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
     });
 
     const historyRows = visibleHistory.length ? visibleHistory.map(row => {
-        let banBtn = (isSuperadmin && row.ip_address !== 'Скрыт/VPN') ? `<button class="btn-bad" style="padding:4px 8px; font-size:12px; margin-left:10px; width:auto;" onclick="window.banIP('${escapeHtml(row.ip_address)}')">⛔ Бан</button>` : '';
+        let banBtn = (isSuperadmin && row.ip_address !== 'Скрыт/VPN') ? `<button class="btn-bad" style="padding:4px 8px; font-size:12px; margin-left:10px; width:auto;" onclick="window.banIP('${jsAttr(row.ip_address)}')">⛔ Бан</button>` : '';
         return `
             <tr class="history-row" data-filter-key="${escapeHtml(row.username)}">
                 <td>${escapeHtml(row.username)}</td>
@@ -1442,7 +1506,7 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
             <div class="muted">Ответы студентов появляются здесь в реальном времени.</div>
             <select id="live-test-select" style="margin-bottom: 20px;" onchange="window.startLiveTracking()">
                 <option value="">Выберите предмет для слежения...</option>
-                ${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
+                ${Object.keys(TEST_TITLES).map(key => `<option value="${escapeHtml(key)}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
             </select>
             <div id="live-dashboard" class="grid" style="grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px;"></div>
         </div>
@@ -1490,7 +1554,7 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
             <div class="card" style="box-shadow:none; margin-top:0; padding:0; margin-bottom: 20px;">
                 <h2>Открыть доступ к экзамену</h2>
                 <select id="access-test" style="margin-bottom:20px;">
-                    ${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
+                    ${Object.keys(TEST_TITLES).map(key => `<option value="${escapeHtml(key)}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
                 </select>
                 
                 <div style="display:flex; gap:20px; margin-bottom:15px; background: #f9fafb; padding:10px; border-radius:8px;">
@@ -1522,7 +1586,7 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
             <h2>Активные доступы</h2>
             <select id="filter-access" onchange="window.filterTableRows('access-row', this.value)" style="margin-bottom: 15px;">
                 <option value="all">Все предметы</option>
-                ${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
+                ${Object.keys(TEST_TITLES).map(key => `<option value="${escapeHtml(key)}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
             </select>
             <div class="table-wrap"><table><tr><th>Студент</th><th>Предмет</th><th>Начало</th><th>Конец</th><th>Попытки (Испол/Всего)</th><th>Удалить</th></tr>${accessRows}</table></div>
         </div>
@@ -1534,7 +1598,7 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
             </div>
             <select id="filter-result" onchange="window.filterTableRows('result-row', this.value)" style="margin-bottom: 15px;">
                 <option value="all">Все предметы</option>
-                ${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
+                ${Object.keys(TEST_TITLES).map(key => `<option value="${escapeHtml(key)}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
             </select>
             <div class="table-wrap"><table><tr><th><input type="checkbox" onchange="window.toggleAllCheckboxes(this, 'result-checkbox')"></th><th>ID</th><th>Пользователь</th><th>Тест</th><th>Баллы</th><th>%</th><th>Удалить</th></tr>${resultRows}</table></div>
         </div>
@@ -1547,7 +1611,7 @@ function renderAdminPanel(users = [], results = [], accesses = [], history = [],
             <div class="muted" style="margin-bottom:15px; text-align:left;">Нажатие "Пауза/Назад" во время теста тратит 1 попытку и сохраняет баллы до выхода сюда.</div>
             <select id="filter-incomplete" onchange="window.filterTableRows('incomplete-row', this.value)" style="margin-bottom: 15px;">
                 <option value="all">Все предметы</option>
-                ${Object.keys(TEST_TITLES).map(key => `<option value="${key}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
+                ${Object.keys(TEST_TITLES).map(key => `<option value="${escapeHtml(key)}">${escapeHtml(TEST_TITLES[key])}</option>`).join('')}
             </select>
             <div class="table-wrap"><table><tr><th><input type="checkbox" onchange="window.toggleAllCheckboxes(this, 'incomplete-checkbox')"></th><th>ID</th><th>Пользователь</th><th>Тест</th><th>Баллы на момент выхода</th><th>Удалить</th></tr>${incompleteRows}</table></div>
         </div>
@@ -1605,7 +1669,12 @@ async function init() {
             sessionCheckInterval = setInterval(securityCheck, 15000);
 
             if (parsed.role === 'admin' || parsed.role === 'superadmin') { 
-                openAdminPanel(); 
+                try {
+                    await openAdminPanel();
+                } catch (e) {
+                    // Временная ошибка сети/базы не должна выкидывать администратора из системы
+                    console.error('Не удалось загрузить админ-панель:', e);
+                }
             } else {
                 const savedProgressStr = localStorage.getItem('test_progress');
                 if (savedProgressStr) {
@@ -1641,5 +1710,19 @@ async function init() {
     }
     renderLogin();
 }
+
+// Доп. подстраховка: гарантированно сохраняем прогресс теста при закрытии
+// вкладки, сворачивании приложения или обновлении страницы — на случай,
+// если это происходит между обычными точками сохранения.
+function persistProgressOnExit() {
+    if (state.currentTestKey && state.questions.length) {
+        saveTestProgress(false);
+    }
+}
+window.addEventListener('beforeunload', persistProgressOnExit);
+window.addEventListener('pagehide', persistProgressOnExit);
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') persistProgressOnExit();
+});
 
 init();
