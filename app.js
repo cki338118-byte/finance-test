@@ -419,14 +419,25 @@ window.startTest = async function(testKey, mode, partName = null) {
             alert('Вы исчерпали количество доступных попыток для этого теста!');
             return window.renderSelection();
         }
-        
-        // Списываем 1 попытку при начале прохождения (безопасное обновление)
-        const { error: updateError } = await supabaseClient.from('test_access')
-            .update({ used_attempts: usedAttempts + 1 })
-            .eq('id', accessData.id);
-            
-        if (updateError) {
-            console.warn("SQL колонки попыток отсутствуют. Продолжаем без них.");
+
+        if (accessData.max_attempts !== undefined) {
+            // Списываем попытку атомарно: условие .eq('used_attempts', usedAttempts)
+            // гарантирует, что запись пройдёт, только если число попыток с момента
+            // чтения не изменилось. Если кто-то (двойной клик, вторая вкладка,
+            // повторная отправка запроса) уже успел списать попытку в этот же
+            // момент — эта запись не выполнится, вместо того чтобы тихо потеряться.
+            const { data: updated, error: updateError } = await supabaseClient.from('test_access')
+                .update({ used_attempts: usedAttempts + 1 })
+                .eq('id', accessData.id)
+                .eq('used_attempts', usedAttempts)
+                .select();
+
+            if (updateError) {
+                console.warn("Ошибка списания попытки, продолжаем без списания:", updateError);
+            } else if (!updated || updated.length === 0) {
+                alert('Не удалось начать тест: похоже, попытка уже была списана только что (например, в другой вкладке). Обновите страницу и попробуйте снова.');
+                return window.renderSelection();
+            }
         }
     }
 
