@@ -365,7 +365,7 @@ window.renderSelection = async function() {
             partsButtons = `<div class="muted" style="margin-bottom:10px; text-align:left;">❌ Вы исчерпали доступные попытки для этого теста.</div>`;
         }
 
-        if (sortingCountMap[test.test_key] > 0 && !isExhausted) {
+        if (sortingCountMap[test.test_key] > 0) {
             partsButtons += ` <button class="btn-primary" style="margin:0; margin-bottom:5px; width:auto; padding:8px 15px; font-size:13px; background:#8b5cf6;" onclick="window.openSortingList('${jsAttr(test.test_key)}')">🗂️ Сортировка</button>`;
         }
 
@@ -392,15 +392,11 @@ window.renderSelection = async function() {
 // ЛОГИКА ПРОХОЖДЕНИЯ ТЕСТА
 // ==========================================
 
-// ==========================================
-// СПИСАНИЕ ПОПЫТКИ ПРИ НАЖАТИИ «НАЧАТЬ»
-// ==========================================
-
-async function consumeAttempt(testKey) {
+window.startTest = async function(testKey, mode, partName = null) {
     const now = new Date().toISOString();
-
-    const { data: accessData, error: accessError } = await supabaseClient
-        .from('test_access')
+    
+    // Проверяем доступ и количество попыток
+    const { data: accessData } = await supabaseClient.from('test_access')
         .select('*')
         .eq('username', state.currentUser.username)
         .eq('test_key', testKey)
@@ -408,87 +404,61 @@ async function consumeAttempt(testKey) {
         .lte('start_time', now)
         .gte('end_time', now)
         .single();
-
-    if (accessError || !accessData) {
-        alert('У вас нет активного доступа к этому тесту (возможно вышло время).');
-        return false;
+    
+    if (!accessData) { 
+        alert('У вас нет активного доступа к этому тесту (возможно вышло время).'); 
+        return window.renderSelection(); 
     }
+    
+    const usedAttempts = accessData.used_attempts || 0;
+    const maxAttempts = accessData.max_attempts || 1;
 
-    // Сохраняем исходную логику: если max_attempts не задан,
-    // лимит не применяется и попытка не списывается.
-    if (accessData.max_attempts === undefined || accessData.max_attempts === null) {
-        return true;
-    }
-
-    const usedAttempts = Number(accessData.used_attempts || 0);
-    const maxAttempts = Number(accessData.max_attempts);
-
-    if (usedAttempts >= maxAttempts) {
-        alert('Вы исчерпали количество доступных попыток для этого теста!');
-        return false;
-    }
-
-    // Атомарное списание: обновление проходит только если used_attempts
-    // всё ещё равно значению, которое мы прочитали.
-    const { data: updated, error: updateError } = await supabaseClient
-        .from('test_access')
-        .update({ used_attempts: usedAttempts + 1 })
-        .eq('id', accessData.id)
-        .eq('used_attempts', usedAttempts)
-        .select();
-
-    if (updateError) {
-        console.error('Ошибка списания попытки:', updateError);
-        alert('Не удалось списать попытку. Тест не был начат. Попробуйте ещё раз.');
-        return false;
-    }
-
-    if (!updated || updated.length === 0) {
-        alert('Не удалось начать: попытка уже была списана. Обновите страницу и попробуйте снова.');
-        return false;
-    }
-
-    return true;
-}
-
-// ==========================================
-// ЛОГИКА ПРОХОЖДЕНИЯ ТЕСТА
-// ==========================================
-
-window.startTest = async function(testKey, mode, partName = null) {
-
-    // Полный тест и отдельная часть расходуют попытку.
-    // «Ошибки» и «Избранные» — нет.
+    // Режим ошибок и избранного не тратит попытки
     if (mode !== 'wrong' && mode !== 'favorite') {
-        const attemptConsumed = await consumeAttempt(testKey);
-        if (!attemptConsumed) {
+        if (accessData.max_attempts !== undefined && usedAttempts >= maxAttempts) {
+            alert('Вы исчерпали количество доступных попыток для этого теста!');
             return window.renderSelection();
+        }
+
+        if (accessData.max_attempts !== undefined) {
+            // Списываем попытку атомарно: условие .eq('used_attempts', usedAttempts)
+            // гарантирует, что запись пройдёт, только если число попыток с момента
+            // чтения не изменилось. Если кто-то (двойной клик, вторая вкладка,
+            // повторная отправка запроса) уже успел списать попытку в этот же
+            // момент — эта запись не выполнится, вместо того чтобы тихо потеряться.
+            const { data: updated, error: updateError } = await supabaseClient.from('test_access')
+                .update({ used_attempts: usedAttempts + 1 })
+                .eq('id', accessData.id)
+                .eq('used_attempts', usedAttempts)
+                .select();
+
+            if (updateError) {
+                console.warn("Ошибка списания попытки, продолжаем без списания:", updateError);
+            } else if (!updated || updated.length === 0) {
+                alert('Не удалось начать тест: похоже, попытка уже была списана только что (например, в другой вкладке). Обновите страницу и попробуйте снова.');
+                return window.renderSelection();
+            }
         }
     }
 
-    document.getElementById('screen-selection').innerHTML =
-        '<h2 style="margin-top:50px; text-align:center;">⏳ Загрузка вопросов...</h2>';
+    document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px; text-align:center;">⏳ Загрузка вопросов...</h2>';
 
     const { data: sData } = await supabaseClient.from('student_q_state')
         .select('*')
         .eq('username', state.currentUser.username)
         .eq('test_key', testKey);
-
+       
     state.qStates = {};
-    (sData || []).forEach(row => {
-        state.qStates[row.question_id] = {
-            id: row.id,
-            is_correct: row.is_correct,
-            is_favorite: row.is_favorite
-        };
+    (sData || []).forEach(row => { 
+        state.qStates[row.question_id] = { id: row.id, is_correct: row.is_correct, is_favorite: row.is_favorite }; 
     });
 
     let filteredQs;
     if (mode === 'wrong' || mode === 'favorite') {
+        // Знаем конкретные question_id заранее — тянем только их,
+        // а не весь банк вопросов теста (может быть сотни строк).
         const wantedIds = Object.keys(state.qStates)
-            .filter(qid => mode === 'wrong'
-                ? state.qStates[qid].is_correct === false
-                : state.qStates[qid].is_favorite === true)
+            .filter(qid => mode === 'wrong' ? state.qStates[qid].is_correct === false : state.qStates[qid].is_favorite === true)
             .map(Number);
 
         if (!wantedIds.length) {
@@ -497,50 +467,34 @@ window.startTest = async function(testKey, mode, partName = null) {
             return;
         }
 
-        const { data, error } = await supabaseClient
-            .from('questions')
-            .select('*')
-            .in('id', wantedIds);
-
-        if (error || !data || !data.length) {
-            alert('Вопросы не найдены!');
-            window.renderSelection();
-            return;
-        }
+        const { data, error } = await supabaseClient.from('questions').select('*').in('id', wantedIds);
+        if (error || !data || !data.length) { alert('Вопросы не найдены!'); window.renderSelection(); return; }
         filteredQs = data;
     } else {
-        const { data: qData, error: qError } = await supabaseClient
-            .from('questions')
-            .select('*')
-            .eq('test_key', testKey);
-
-        if (qError || !qData || qData.length === 0) {
-            alert('Вопросы не найдены!');
-            window.renderSelection();
-            return;
+        const { data: qData, error: qError } = await supabaseClient.from('questions').select('*').eq('test_key', testKey);
+        if (qError || !qData || qData.length === 0) { 
+            alert('Вопросы не найдены!'); 
+            window.renderSelection(); 
+            return; 
         }
 
         if (mode === 'part' && partName) {
             filteredQs = qData.filter(q => (q.part_name || 'Основная часть') === partName);
-            if (!filteredQs.length) {
-                alert('В этой части нет вопросов!');
-                window.renderSelection();
-                return;
-            }
+            if (!filteredQs.length) { alert('В этой части нет вопросов!'); window.renderSelection(); return; }
         } else {
             filteredQs = qData;
         }
     }
 
     state.currentTestKey = testKey;
-    state.currentPartName = partName;
+    state.currentPartName = partName; 
     state.questions = shuffleArray(filteredQs.map(cloneQuestion));
     state.currentIndex = 0;
     state.score = 0;
     state.wrongQuestions = [];
-    state.isRepeatMode = (mode !== 'part' && mode !== 'all');
-
-    saveTestProgress(false);
+    state.isRepeatMode = (mode !== 'part' && mode !== 'all'); 
+    
+    saveTestProgress(false); 
     renderQuizShell();
     window.loadQuestion();
 };
@@ -754,7 +708,7 @@ window.openSortingList = async function(testKey) {
 
     // Если задание одно — сразу открываем его, без лишнего экрана выбора
     if (data.length === 1) {
-        window.startSorting(data[0].id, testKey);
+        window.startSorting(data[0].id);
         return;
     }
 
@@ -767,21 +721,14 @@ window.openSortingList = async function(testKey) {
             ${data.map(ex => `
                 <div class="card" style="box-shadow:none; border:1px solid #d7dce3; margin-bottom:12px; text-align:left; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                     <div style="font-weight:bold;">${escapeHtml(ex.title)}</div>
-                    <button class="btn-ok" style="margin:0; width:auto; padding:8px 15px;" onclick="window.startSorting(${ex.id}, '${jsAttr(testKey)}')">▶️ Начать</button>
+                    <button class="btn-ok" style="margin:0; width:auto; padding:8px 15px;" onclick="window.startSorting(${ex.id})">▶️ Начать</button>
                 </div>
             `).join('')}
         </div>
     `;
 };
 
-window.startSorting = async function(exerciseId, testKey) {
-
-    // Попытка списывается только после нажатия «Начать».
-    const attemptConsumed = await consumeAttempt(testKey);
-    if (!attemptConsumed) {
-        return window.renderSelection();
-    }
-
+window.startSorting = async function(exerciseId) {
     document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px; text-align:center;">⏳ Загрузка задания...</h2>';
 
     const { data, error } = await supabaseClient.from('sorting_exercises').select('*').eq('id', exerciseId).single();
@@ -1276,7 +1223,7 @@ function renderSubjectQuestionsList() {
                 ${partBadge}
                 <div style="font-weight: bold; font-size: 16px; margin-bottom: 8px; padding-right: 30px;">${index + 1}. ${escapeHtml(q.q)}</div>
                 <div>${answersHtml}</div>
-                ${isSuperadmin ? `
+                ${(isSuperadmin || state.currentUser.role === 'admin') ? `
                 <div style="margin-top: 12px; display:flex; gap:10px;">
                     <button class="btn-gray" style="padding:8px; width:auto; font-size:13px;" onclick="window.openQuestionEditor(${q.id})">✏️ Редактировать</button>
                 </div>
@@ -1292,6 +1239,10 @@ function renderSubjectQuestionsList() {
 }
 
 window.openQuestionEditor = function(id) {
+    if (state.currentUser.role !== 'admin' && state.currentUser.role !== 'superadmin') {
+        return alert('⛔ У вас нет прав на редактирование вопросов.');
+    }
+
     state.editingQuestionId = id;
     document.getElementById('questions-list-render').classList.add('hidden');
     
@@ -1366,6 +1317,10 @@ window.cancelQuestionEdit = function() {
 };
 
 window.saveQuestion = async function() {
+    if (state.currentUser.role !== 'admin' && state.currentUser.role !== 'superadmin') {
+        return alert('⛔ У вас нет прав на редактирование вопросов.');
+    }
+
     const qPart = document.getElementById('edit-q-part').value.trim() || 'Основная часть';
     const qText = document.getElementById('edit-q-text').value.trim();
     const inputs = document.querySelectorAll('.edit-ans-input');
