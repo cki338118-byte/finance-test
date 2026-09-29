@@ -365,6 +365,10 @@ window.renderSelection = async function() {
             partsButtons = `<div class="muted" style="margin-bottom:10px; text-align:left;">❌ Вы исчерпали доступные попытки для этого теста.</div>`;
         }
 
+        if (sortingCountMap[test.test_key] > 0) {
+            partsButtons += ` <button class="btn-primary" style="margin:0; margin-bottom:5px; width:auto; padding:8px 15px; font-size:13px; background:#8b5cf6;" onclick="window.openSortingList('${jsAttr(test.test_key)}')">🗂️ Сортировка</button>`;
+        }
+
         html += `
         <div class="card" style="box-shadow:none; border:1px solid #d7dce3; margin-bottom:15px; text-align:left;">
             <h3 style="margin-top:0; margin-bottom:6px;">${escapeHtml(getTestTitle(test.test_key))}</h3>
@@ -375,7 +379,6 @@ window.renderSelection = async function() {
             <div style="display:flex; gap:10px; flex-wrap:wrap; border-top: 1px solid #eee; padding-top: 10px;">
                 <button class="btn-bad" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="window.startTest('${jsAttr(test.test_key)}', 'wrong')">❌ Ошибки</button>
                 <button class="btn-gray" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="window.startTest('${jsAttr(test.test_key)}', 'favorite')">⭐ Избранные</button>
-                ${sortingCountMap[test.test_key] > 0 ? `<button class="btn-primary" style="margin:0; width:auto; padding:8px 15px; font-size:13px; background:#8b5cf6;" onclick="window.openSortingList('${jsAttr(test.test_key)}')">🗂️ Сортировка</button>` : ''}
             </div>
         </div>
         `; 
