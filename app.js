@@ -13,6 +13,7 @@ const screenSelection = document.getElementById('screen-selection');
 const screenQuiz = document.getElementById('screen-quiz');
 const screenResult = document.getElementById('screen-result');
 const screenAdmin = document.getElementById('screen-admin');
+const screenSorting = document.getElementById('screen-sorting');
 
 let currentAdminTab = 'subjects';
 let TEST_TITLES = {};
@@ -36,7 +37,9 @@ const state = {
     adminBannedIps: [],
     activeSubjectKey: null,
     editingQuestionId: null,
-    activeGroupManager: null
+    activeGroupManager: null,
+    adminSortingExercises: [],
+    currentSorting: null
 };
 
 const SESSION_LIMIT_MS = 5 * 60 * 60 * 1000;
@@ -92,7 +95,7 @@ function shuffleArray(array) {
 }
 
 function showScreen(activeId) {
-    const screens = [screenLogin, screenSelection, screenQuiz, screenResult, screenAdmin];
+    const screens = [screenLogin, screenSelection, screenQuiz, screenResult, screenAdmin, screenSorting];
     screens.forEach(s => { if(s) s.classList.add('hidden'); });
     
     const target = document.getElementById(activeId);
@@ -324,6 +327,7 @@ window.renderSelection = async function() {
     
     const testKeys = data.map(d => d.test_key);
     const { data: qData } = await supabaseClient.from('test_parts_summary').select('test_key, part_name').in('test_key', testKeys);
+    const { data: sortData } = await supabaseClient.from('sorting_exercises').select('test_key').in('test_key', testKeys);
     
     const partsMap = {};
     testKeys.forEach(k => partsMap[k] = new Set());
@@ -331,6 +335,10 @@ window.renderSelection = async function() {
     if (qData) {
         qData.forEach(q => { partsMap[q.test_key].add(q.part_name || 'Основная часть'); });
     }
+
+    const sortingCountMap = {};
+    testKeys.forEach(k => sortingCountMap[k] = 0);
+    (sortData || []).forEach(s => { sortingCountMap[s.test_key] = (sortingCountMap[s.test_key] || 0) + 1; });
 
     html += `<div style="max-width:600px; margin:0 auto;">`;
     data.forEach(test => { 
@@ -367,6 +375,7 @@ window.renderSelection = async function() {
             <div style="display:flex; gap:10px; flex-wrap:wrap; border-top: 1px solid #eee; padding-top: 10px;">
                 <button class="btn-bad" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="window.startTest('${jsAttr(test.test_key)}', 'wrong')">❌ Ошибки</button>
                 <button class="btn-gray" style="margin:0; width:auto; padding:8px 15px; font-size:13px;" onclick="window.startTest('${jsAttr(test.test_key)}', 'favorite')">⭐ Избранные</button>
+                ${sortingCountMap[test.test_key] > 0 ? `<button class="btn-primary" style="margin:0; width:auto; padding:8px 15px; font-size:13px; background:#8b5cf6;" onclick="window.openSortingList('${jsAttr(test.test_key)}')">🗂️ Сортировка</button>` : ''}
             </div>
         </div>
         `; 
@@ -675,6 +684,169 @@ function renderResult() {
 }
 
 // ==========================================
+// ЛОГИКА СОРТИРОВКИ ПО КОРЗИНАМ
+// ==========================================
+
+window.openSortingList = async function(testKey) {
+    document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px; text-align:center;">⏳ Загрузка...</h2>';
+    const { data, error } = await supabaseClient.from('sorting_exercises').select('id, title').eq('test_key', testKey);
+    if (error || !data || !data.length) { alert('Заданий на сортировку пока нет.'); window.renderSelection(); return; }
+
+    // Если задание одно — сразу открываем его, без лишнего экрана выбора
+    if (data.length === 1) {
+        window.startSorting(data[0].id);
+        return;
+    }
+
+    document.getElementById('screen-selection').innerHTML = `
+        <div class="screen-top">
+            <div class="left"><h1 class="title-left">Выберите задание</h1></div>
+            <div class="right"><button class="btn-gray" onclick="window.renderSelection()">🔙 Назад</button></div>
+        </div>
+        <div style="max-width:600px; margin:0 auto;">
+            ${data.map(ex => `
+                <div class="card" style="box-shadow:none; border:1px solid #d7dce3; margin-bottom:12px; text-align:left; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                    <div style="font-weight:bold;">${escapeHtml(ex.title)}</div>
+                    <button class="btn-ok" style="margin:0; width:auto; padding:8px 15px;" onclick="window.startSorting(${ex.id})">▶️ Начать</button>
+                </div>
+            `).join('')}
+        </div>
+    `;
+};
+
+window.startSorting = async function(exerciseId) {
+    document.getElementById('screen-selection').innerHTML = '<h2 style="margin-top:50px; text-align:center;">⏳ Загрузка задания...</h2>';
+
+    const { data, error } = await supabaseClient.from('sorting_exercises').select('*').eq('id', exerciseId).single();
+    if (error || !data) { alert('Задание не найдено!'); window.renderSelection(); return; }
+
+    const items = shuffleArray((data.items || []).map(it => ({ word: it.word, basket: it.basket, placedIn: null })));
+
+    state.currentSorting = {
+        id: data.id,
+        testKey: data.test_key,
+        title: data.title,
+        baskets: data.baskets || [],
+        items: items,
+        selectedItemIndex: null,
+        checked: false
+    };
+
+    renderSortingScreen();
+};
+
+function renderSortingScreen() {
+    showScreen('screen-sorting');
+    const s = state.currentSorting;
+
+    const basketsHtml = s.baskets.map((label, bIdx) => {
+        const chips = s.items.map((it, idx) => ({ it, idx }))
+            .filter(({ it }) => it.placedIn === bIdx)
+            .map(({ it, idx }) => {
+                let cls = 'word-chip';
+                if (s.checked) cls += (it.placedIn === it.basket) ? ' correct' : ' wrong';
+                return `<span class="${cls}" onclick="window.sortWordClick(${idx}, event)">${escapeHtml(it.word)}</span>`;
+            }).join('');
+        return `
+            <div class="sorting-basket" onclick="window.sortBasketClick(${bIdx})">
+                <div class="sorting-basket-title">${escapeHtml(label)}</div>
+                <div class="sorting-basket-body">${chips || '<span class="muted" style="font-size:13px; margin:0;">—</span>'}</div>
+            </div>
+        `;
+    }).join('');
+
+    const poolHtml = s.items.map((it, idx) => ({ it, idx }))
+        .filter(({ it }) => it.placedIn === null)
+        .map(({ it, idx }) => {
+            const selected = (s.selectedItemIndex === idx) ? ' selected' : '';
+            return `<span class="word-chip${selected}" onclick="window.sortWordClick(${idx}, event)">${escapeHtml(it.word)}</span>`;
+        }).join('');
+
+    const allPlaced = s.items.every(it => it.placedIn !== null);
+    const correctCount = s.items.filter(it => it.placedIn === it.basket).length;
+
+    screenSorting.innerHTML = `
+        <div class="screen-top">
+            <div class="left" style="display:flex; align-items:center;">
+                <button class="btn-gray" style="padding:6px 12px; margin-right:15px; font-size:14px; width:auto;" onclick="window.exitSorting()">🔙 Назад</button>
+                <div>
+                    <h1 class="title-left" style="margin:0;">${escapeHtml(s.title)}</h1>
+                    <div class="subtitle-left">Пользователь: ${escapeHtml(state.currentUser.username)}</div>
+                </div>
+            </div>
+            <div class="right"><button class="btn-bad" onclick="window.logout()">🚪 Выйти</button></div>
+        </div>
+
+        <div class="muted" style="margin-bottom:10px;">Нажмите на слово, затем нажмите на нужную корзину. Чтобы вернуть слово обратно — нажмите на него ещё раз.</div>
+
+        <div class="sorting-baskets">${basketsHtml}</div>
+
+        <div class="sorting-pool">${poolHtml || '<span class="muted" style="font-size:14px; margin:0;">Все слова разложены</span>'}</div>
+
+        ${s.checked ? `
+            <div class="result-meta" style="margin-top:15px;">Правильно: ${correctCount} из ${s.items.length}</div>
+            <div class="toolbar"><button class="btn-gray" onclick="window.backToSelection()">К выбору тестов</button></div>
+        ` : `
+            <button class="btn-ok" style="margin-top:15px; ${allPlaced ? '' : 'opacity:.5;'}" ${allPlaced ? '' : 'disabled'} onclick="window.checkSorting()">✅ Проверить</button>
+            <div class="sorting-progress-note">${allPlaced ? 'Можно проверять!' : 'Разложите все слова по корзинам'}</div>
+        `}
+    `;
+}
+
+window.sortWordClick = function(idx, event) {
+    if (event) event.stopPropagation();
+    const s = state.currentSorting;
+    if (!s || s.checked) return;
+    const item = s.items[idx];
+
+    if (item.placedIn !== null) {
+        item.placedIn = null;
+        s.selectedItemIndex = null;
+    } else if (s.selectedItemIndex === idx) {
+        s.selectedItemIndex = null;
+    } else {
+        s.selectedItemIndex = idx;
+    }
+    renderSortingScreen();
+};
+
+window.sortBasketClick = function(basketIdx) {
+    const s = state.currentSorting;
+    if (!s || s.checked || s.selectedItemIndex === null) return;
+    s.items[s.selectedItemIndex].placedIn = basketIdx;
+    s.selectedItemIndex = null;
+    renderSortingScreen();
+};
+
+window.checkSorting = async function() {
+    const s = state.currentSorting;
+    if (!s || s.items.some(it => it.placedIn === null)) return;
+
+    s.checked = true;
+    renderSortingScreen();
+
+    const correctCount = s.items.filter(it => it.placedIn === it.basket).length;
+    const total = s.items.length;
+    const percentage = Number(((correctCount / total) * 100).toFixed(2));
+
+    await supabaseClient.from('results').insert([{
+        username: state.currentUser.username,
+        test_name: `${getTestTitle(s.testKey)} — Сортировка: ${s.title}`,
+        test_key: s.testKey,
+        score: correctCount,
+        total: total,
+        percentage: percentage,
+        status: 'completed',
+        activity_type: 'sorting'
+    }]);
+};
+
+window.exitSorting = function() {
+    state.currentSorting = null;
+    window.renderSelection();
+};
+
+// ==========================================
 // АДМИН ПАНЕЛЬ И УПРАВЛЕНИЕ
 // ==========================================
 
@@ -791,6 +963,10 @@ window.openSubjectManager = async function(testKey) {
     if (error) { alert('Ошибка загрузки вопросов'); return; }
     
     state.adminQuestions = data || [];
+
+    const { data: sortData } = await supabaseClient.from('sorting_exercises').select('*').eq('test_key', testKey).order('id', { ascending: true });
+    state.adminSortingExercises = sortData || [];
+
     renderSubjectQuestionsList();
 };
 
@@ -920,6 +1096,55 @@ window.splitQuestionsIntoParts = async function() {
     window.openSubjectManager(state.activeSubjectKey);
 };
 
+window.importSortingExercise = async function() {
+    const title = document.getElementById('sorting-title').value.trim();
+    const text = document.getElementById('sorting-import-text').value;
+
+    if (!title) return alert('Введите название задания!');
+    if (!text.trim()) return alert('Вставьте корзины и слова!');
+
+    const blocks = text.split('+++++').map(b => b.trim()).filter(b => b);
+    if (blocks.length < 2) return alert('Нужно минимум 2 корзины (разделите их строкой +++++)!');
+
+    const baskets = [];
+    const items = [];
+
+    blocks.forEach((block, bIdx) => {
+        const lines = block.split('\n').map(l => l.trim()).filter(l => l);
+        if (!lines.length) return;
+        baskets.push(lines[0]);
+        lines.slice(1).forEach(word => { items.push({ word, basket: bIdx }); });
+    });
+
+    if (items.length < 2) return alert('Слишком мало слов — под каждой корзиной нужно хотя бы одно слово!');
+
+    const btn = document.getElementById('sorting-import-btn');
+    btn.innerText = 'Создание...';
+    btn.disabled = true;
+
+    const { error } = await supabaseClient.from('sorting_exercises').insert([{
+        test_key: state.activeSubjectKey,
+        title: title,
+        baskets: baskets,
+        items: items
+    }]);
+
+    if (error) {
+        alert('Ошибка при создании задания');
+        btn.innerText = 'Создать задание';
+        btn.disabled = false;
+    } else {
+        alert(`Задание создано: ${baskets.length} корзин, ${items.length} слов`);
+        window.openSubjectManager(state.activeSubjectKey);
+    }
+};
+
+window.deleteSortingExercise = async function(id) {
+    if (!confirm('Удалить это задание на сортировку?')) return;
+    await supabaseClient.from('sorting_exercises').delete().eq('id', id);
+    window.openSubjectManager(state.activeSubjectKey);
+};
+
 function renderSubjectQuestionsList() {
     const isSuperadmin = state.currentUser.role === 'superadmin';
     document.getElementById('subject-editor-title').innerText = `Вопросы: ${getTestTitle(state.activeSubjectKey)} (${state.adminQuestions.length})`;
@@ -932,6 +1157,31 @@ function renderSubjectQuestionsList() {
             <input id="import-part-name" type="text" placeholder="Название части" value="Основная часть" style="width:100%; padding:8px; border-radius:8px; border:1px solid #ccc; margin-bottom:10px;">
             <textarea id="import-text" style="width:100%; height:100px; padding:10px; border-radius:8px; border:1px solid #ccc; font-family:monospace;" placeholder="+++++ Вопрос 1...\\n==== Неверный\\n====# Верный..."></textarea>
             <button id="import-btn" class="btn-ok" style="margin-top:10px; width:auto; padding:8px 20px;" onclick="window.parseAndImportQuestions()">Импортировать вопросы</button>
+        </div>
+        <div class="card" style="box-shadow:none; border:2px dashed #8b5cf6; margin-bottom:20px; background:#faf5ff;">
+            <h3 style="margin-top:0;">🗂️ Задания на сортировку по корзинам</h3>
+            <div class="muted" style="margin-bottom:10px; text-align:left;">Формат: первая строка блока — название корзины, дальше слова этой корзины по одному на строке. Блоки разделяются строкой из пяти плюсов (+++++). Минимум 2 корзины.</div>
+            <input id="sorting-title" type="text" placeholder="Название задания (напр: Виды рыночных структур)" style="width:100%; padding:8px; border-radius:8px; border:1px solid #ccc; margin-bottom:10px;">
+            <textarea id="sorting-import-text" style="width:100%; height:160px; padding:10px; border-radius:8px; border:1px solid #ccc; font-family:monospace;" placeholder="Монополия
+слово1
+слово2
++++++
+Олигополия
+слово3
+слово4"></textarea>
+            <button id="sorting-import-btn" class="btn-ok" style="margin-top:10px; width:auto; padding:8px 20px; background:#8b5cf6;" onclick="window.importSortingExercise()">Создать задание</button>
+
+            ${state.adminSortingExercises.length ? `
+                <div style="margin-top:20px;">
+                    <h4 style="margin-bottom:10px; text-align:left;">Существующие задания:</h4>
+                    ${state.adminSortingExercises.map(ex => `
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:10px; background:#fff; border-radius:8px; border:1px solid #e2d9f5; margin-bottom:8px; flex-wrap:wrap; gap:10px;">
+                            <span>${escapeHtml(ex.title)} <span class="muted" style="font-size:12px;">(${(ex.baskets || []).length} корзин, ${(ex.items || []).length} слов)</span></span>
+                            <button class="btn-bad" style="margin:0; width:auto; padding:6px 12px; font-size:12px;" onclick="window.deleteSortingExercise(${ex.id})">❌ Удалить</button>
+                        </div>
+                    `).join('')}
+                </div>
+            ` : ''}
         </div>
         <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
             <button class="btn-primary" style="margin:0; width:auto; padding:10px 20px;" onclick="window.openQuestionEditor(null)">+ Создать 1 вопрос вручную</button>
