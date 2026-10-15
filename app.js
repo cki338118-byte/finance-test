@@ -14,6 +14,7 @@ const screenQuiz = document.getElementById('screen-quiz');
 const screenResult = document.getElementById('screen-result');
 const screenAdmin = document.getElementById('screen-admin');
 const screenSorting = document.getElementById('screen-sorting');
+const screenKahoot = document.getElementById('screen-kahoot');
 
 let currentAdminTab = 'subjects';
 let TEST_TITLES = {};
@@ -95,7 +96,7 @@ function shuffleArray(array) {
 }
 
 function showScreen(activeId) {
-    const screens = [screenLogin, screenSelection, screenQuiz, screenResult, screenAdmin, screenSorting];
+    const screens = [screenLogin, screenSelection, screenQuiz, screenResult, screenAdmin, screenSorting, screenKahoot];
     screens.forEach(s => { if(s) s.classList.add('hidden'); });
     
     const target = document.getElementById(activeId);
@@ -189,8 +190,10 @@ function renderLogin() {
         <input id="password" type="password" placeholder="Пароль" autocomplete="current-password" />
         <button id="login-btn" class="btn-ok">Войти</button>
         <div class="small-note">Доступ строго контролируется. Нарушители блокируются по IP.</div>
+        <button id="login-kahoot-btn" class="ql-login-button" type="button">🎮 Войти в игру по PIN-коду</button>
     `;
     document.getElementById('login-btn').addEventListener('click', handleLogin);
+    document.getElementById('login-kahoot-btn').addEventListener('click', window.openKahootMenu);
     document.getElementById('password').addEventListener('keydown', (e) => { 
         if (e.key === 'Enter' && !isLoggingIn) handleLogin(); 
     });
@@ -252,6 +255,11 @@ async function handleLogin() {
     isLoggingIn = false;
     await syncSubjects();
 
+    if (/kahoot=\d{6}/i.test(window.location.hash)) {
+        await window.openKahootMenu();
+        return;
+    }
+
     if (data.role === 'admin' || data.role === 'superadmin') {
         await openAdminPanel();
     } else {
@@ -312,6 +320,7 @@ window.renderSelection = async function() {
                 <div class="subtitle-left">Пользователь: ${escapeHtml(state.currentUser.username)}</div>
             </div>
             <div class="right">
+                <button class="ql-mini-button" onclick="window.openKahootMenu()">🎮 Kahoot-режим</button>
                 <button class="btn-gray" onclick="window.renderSelection()">🔄 Обновить</button>
                 <button class="btn-gray" onclick="window.changeMyPassword()">🔑 Пароль</button>
                 <button class="btn-bad" onclick="window.logout()">🚪 Выйти</button>
@@ -1733,6 +1742,7 @@ function renderAdminPanel() {
                 <div class="subtitle-left">Статус: ${isSuperadmin ? 'Главный Администратор' : 'Администратор'} | ${escapeHtml(state.currentUser.username)}</div>
             </div>
             <div class="right">
+                <button class="ql-mini-button" onclick="window.openKahootMenu()">🎮 Kahoot-режим</button>
                 <button class="btn-gray" onclick="openAdminPanel()">🔄 Обновить</button>
                 <button class="btn-gray" onclick="window.changeMyPassword()">🔑 Пароль</button>
                 <button class="btn-bad" onclick="window.logout()">🚪 Выйти</button>
@@ -1911,6 +1921,591 @@ function renderAdminPanel() {
 }
 
 // ==========================================
+// QUIZ LIVE — живая игровая викторина по PIN-коду
+// Использует отдельные таблицы и защищённые RPC в Supabase.
+// ==========================================
+
+let kahootSession = null;
+let kahootRealtimeChannel = null;
+let kahootClockTimer = null;
+let kahootActionInProgress = false;
+let kahootSyncInProgress = false;
+let kahootSyncQueued = false;
+
+function kahootRandomToken() {
+    if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+        const bytes = new Uint8Array(32);
+        window.crypto.getRandomValues(bytes);
+        return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    }
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+}
+
+function kahootFriendlyError(error) {
+    const raw = String(error?.message || error || 'Неизвестная ошибка');
+    const messages = [
+        [/PIN_IN_USE|duplicate key value violates unique constraint.*kahoot_games_pin/i, 'Этот PIN уже используется. Попробуйте создать игру ещё раз.'],
+        [/GAME_NOT_FOUND_OR_STARTED/i, 'Комната не найдена или ведущий уже начал игру. Проверьте PIN-код.'],
+        [/GAME_NOT_FOUND/i, 'Игровая комната не найдена.'],
+        [/NAME_TAKEN|kahoot_players_unique_name/i, 'Это имя уже занято в данной игре. Выберите другое.'],
+        [/INVALID_HOST_TOKEN/i, 'Не удалось подтвердить права ведущего. Откройте сохранённую сессию ведущего.'],
+        [/INVALID_PLAYER_TOKEN/i, 'Сессия игрока не подтверждена. Выйдите в меню и подключитесь заново.'],
+        [/ALREADY_ANSWERED/i, 'Ответ на этот вопрос уже отправлен.'],
+        [/ROUND_CLOSED/i, 'Время ответа истекло или ведущий уже закрыл вопрос.'],
+        [/INVALID_GAME_PHASE/i, 'Это действие сейчас недоступно. Обновляем состояние игры.'],
+        [/INVALID_PLAYER_NAME/i, 'Имя должно содержать от 1 до 24 символов.'],
+        [/INVALID_QUESTION_DATA|ANSWER_KEY_MISSING/i, 'Не удалось подготовить вопросы для игры. Проверьте варианты ответов в тесте.'],
+        [/KAHOOT_SECRET_NOT_INITIALIZED/i, 'Секреты игрового режима не созданы. Повторно проверьте выполнение kahoot_setup.sql в Supabase.'],
+        [/permission denied|row-level security/i, 'Supabase запретил доступ. Проверьте, что SQL-миграция Quiz Live выполнена полностью.'],
+        [/kahoot_(games|players|answers).*does not exist|function .*kahoot_.* does not exist/i, 'Не найдены таблицы или функции игрового режима. Сначала выполните kahoot_setup.sql в Supabase.']
+    ];
+    for (const [pattern, message] of messages) if (pattern.test(raw)) return message;
+    return `Ошибка игрового режима: ${raw}`;
+}
+
+async function kahootRpc(name, params) {
+    const { data, error } = await supabaseClient.rpc(name, params);
+    if (error) throw new Error(kahootFriendlyError(error));
+    return data;
+}
+
+function kahootCurrentUserName() {
+    return state.currentUser?.username ? String(state.currentUser.username) : '';
+}
+
+function kahootIsAdministrator() {
+    return !!state.currentUser && ['admin', 'superadmin'].includes(state.currentUser.role);
+}
+
+function kahootUrl(pin) {
+    return `${window.location.origin}${window.location.pathname}#kahoot=${encodeURIComponent(pin)}`;
+}
+
+async function kahootCopy(text) {
+    try {
+        await navigator.clipboard.writeText(text);
+        alert('Ссылка скопирована. Отправьте её участникам или покажите QR-код.');
+    } catch (_) {
+        window.prompt('Скопируйте ссылку на игру:', text);
+    }
+}
+
+async function kahootStopRealtime() {
+    if (kahootClockTimer) {
+        clearInterval(kahootClockTimer);
+        kahootClockTimer = null;
+    }
+    if (kahootRealtimeChannel && supabaseClient) {
+        try { await supabaseClient.removeChannel(kahootRealtimeChannel); } catch (_) {}
+        kahootRealtimeChannel = null;
+    }
+}
+
+async function kahootConnectRealtime(gameId) {
+    await kahootStopRealtime();
+    kahootRealtimeChannel = supabaseClient.channel(`quiz-live-${gameId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'kahoot_games', filter: `id=eq.${gameId}` }, () => window.kahootSync())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'kahoot_players', filter: `game_id=eq.${gameId}` }, () => window.kahootSync())
+        .subscribe();
+    kahootClockTimer = setInterval(kahootClockTick, 300);
+    await window.kahootSync();
+}
+
+async function kahootGetAvailableTests() {
+    await syncSubjects();
+    const keys = Object.keys(TEST_TITLES);
+    if (kahootIsAdministrator()) return keys.map(key => ({ key, title: TEST_TITLES[key] || key }));
+    if (!state.currentUser?.username) return [];
+    const now = new Date().toISOString();
+    const { data, error } = await supabaseClient.from('test_access')
+        .select('test_key')
+        .eq('username', state.currentUser.username)
+        .eq('is_active', true)
+        .lte('start_time', now)
+        .gte('end_time', now);
+    if (error) throw new Error(kahootFriendlyError(error));
+    const allowed = [...new Set((data || []).map(row => row.test_key))];
+    return allowed.map(key => ({ key, title: TEST_TITLES[key] || key })).filter(row => row.key);
+}
+
+window.openKahootMenu = async function() {
+    await kahootStopRealtime();
+    kahootSession = null;
+    showScreen('screen-kahoot');
+    screenKahoot.innerHTML = `
+        <div class="ql-shell">
+            <div class="ql-nav">
+                <div class="ql-brand"><span class="ql-brand-mark">Q</span><span>QUIZ LIVE</span></div>
+                <button class="ql-nav-button" onclick="window.kahootBackToSite()">← Назад на сайт</button>
+            </div>
+            <section class="ql-hero">
+                <div class="ql-eyebrow">LIVE QUIZ • MULTIPLAYER</div>
+                <h1>Учитесь. Играйте. Побеждайте.</h1>
+                <p>Создайте игровую комнату для группы или присоединитесь к ведущему по PIN-коду.</p>
+                <div class="ql-hero-orbs" aria-hidden="true"><span>✦</span><span>●</span><span>▲</span><span>◆</span></div>
+            </section>
+            <div id="ql-menu-content" class="ql-menu-grid">
+                <div class="ql-panel"><div class="ql-skeleton"></div><div class="ql-skeleton short"></div></div>
+                <div class="ql-panel"><div class="ql-skeleton"></div><div class="ql-skeleton short"></div></div>
+            </div>
+            <p class="ql-footnote">Игровой режим сайта • ответы и очки синхронизируются в реальном времени</p>
+        </div>`;
+
+    const urlMatch = window.location.hash.match(/kahoot=(\d{6})/i);
+    const pinFromLink = urlMatch ? urlMatch[1] : '';
+    let testOptions = [];
+    let loadError = '';
+    if (state.currentUser) {
+        try { testOptions = await kahootGetAvailableTests(); }
+        catch (error) { loadError = error.message; }
+    }
+    const savedHost = (() => { try { return JSON.parse(localStorage.getItem('kahoot_host_session') || 'null'); } catch (_) { return null; } })();
+    const savedPlayer = (() => { try { return JSON.parse(localStorage.getItem('kahoot_player_session') || 'null'); } catch (_) { return null; } })();
+    const canHost = !!state.currentUser && testOptions.length > 0;
+    const durationOptions = [10, 15, 20, 30, 60, 90].map(seconds => `<option value="${seconds}" ${seconds === 20 ? 'selected' : ''}>${seconds} секунд</option>`).join('');
+    const testOptionsHtml = testOptions.map(item => `<option value="${escapeHtml(item.key)}">${escapeHtml(item.title)}</option>`).join('');
+
+    document.getElementById('ql-menu-content').innerHTML = `
+        ${canHost ? `
+        <section class="ql-panel ql-host-panel">
+            <div class="ql-panel-icon">✦</div>
+            <div class="ql-panel-kicker">ДЛЯ ВЕДУЩЕГО</div>
+            <h2>Создать игру</h2>
+            <p>Выберите тест, настройте таймер и запустите общую викторину на экране.</p>
+            <label for="ql-test-select">Тест / предмет</label>
+            <select id="ql-test-select">${testOptionsHtml}</select>
+            <label for="ql-duration-select">Время на ответ</label>
+            <select id="ql-duration-select">${durationOptions}</select>
+            <button class="ql-primary-button" onclick="window.kahootCreateGame()">＋ Создать игровую комнату</button>
+        </section>` : `
+        <section class="ql-panel ql-host-panel">
+            <div class="ql-panel-icon">✦</div>
+            <div class="ql-panel-kicker">ДЛЯ ВЕДУЩЕГО</div>
+            <h2>Создать игру</h2>
+            <p>${state.currentUser ? 'Сейчас нет доступных для вас тестов. Попросите администратора открыть доступ.' : 'Войдите на сайт, чтобы создать игру. Присоединиться по PIN можно без входа.'}</p>
+            ${loadError ? `<div class="ql-error">${escapeHtml(loadError)}</div>` : ''}
+            ${!state.currentUser ? `<button class="ql-secondary-button" onclick="window.kahootBackToSite()">Войти на сайт</button>` : ''}
+        </section>`}
+        <section class="ql-panel ql-join-panel">
+            <div class="ql-panel-icon join">➜</div>
+            <div class="ql-panel-kicker">ДЛЯ УЧАСТНИКА</div>
+            <h2>Войти в игру</h2>
+            <p>Введите шестизначный PIN-код с экрана ведущего.</p>
+            <label for="ql-pin-input">PIN-код</label>
+            <input id="ql-pin-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="Например, 483 219" value="${escapeHtml(pinFromLink)}" oninput="this.value=this.value.replace(/\\D/g,'').slice(0,6)">
+            <label for="ql-name-input">Ваше имя</label>
+            <input id="ql-name-input" maxlength="24" autocomplete="nickname" placeholder="Введите имя" value="${escapeHtml(kahootCurrentUserName())}">
+            <button class="ql-primary-button ql-join-button" onclick="window.kahootJoinGame()">Войти и играть →</button>
+            <div class="ql-small-note">Аккаунт не нужен. Имя будет видно ведущему и другим игрокам.</div>
+        </section>
+        ${(savedHost || savedPlayer) ? `
+        <section class="ql-resume-card">
+            <div><strong>У вас есть сохранённая игра</strong><span>Можно вернуться в комнату на этом устройстве.</span></div>
+            <button class="ql-secondary-button" onclick="window.kahootResumeSaved()">Продолжить →</button>
+        </section>` : ''}
+    `;
+    const pinInput = document.getElementById('ql-pin-input');
+    if (pinInput && pinFromLink) pinInput.focus();
+};
+
+window.kahootBackToSite = async function() {
+    await kahootStopRealtime();
+    kahootSession = null;
+    if (state.currentUser?.role === 'admin' || state.currentUser?.role === 'superadmin') await openAdminPanel();
+    else if (state.currentUser) await window.renderSelection();
+    else renderLogin();
+};
+
+window.kahootBackToMenu = async function() {
+    const finishedSession = kahootSession?.game?.status === 'finished' ? kahootSession : null;
+    await kahootStopRealtime();
+    if (finishedSession?.role === 'host') localStorage.removeItem('kahoot_host_session');
+    if (finishedSession?.role === 'player') localStorage.removeItem('kahoot_player_session');
+    kahootSession = null;
+    await window.openKahootMenu();
+};
+
+window.kahootCreateGame = async function() {
+    if (!state.currentUser) return alert('Сначала войдите на сайт.');
+    if (kahootActionInProgress) return;
+    const testKey = document.getElementById('ql-test-select')?.value;
+    const duration = Number(document.getElementById('ql-duration-select')?.value || 20);
+    if (!testKey) return alert('Выберите тест.');
+    kahootActionInProgress = true;
+    try {
+        const { data: rows, error } = await supabaseClient.from('questions')
+            .select('id, test_key, q, a, c, part_name')
+            .eq('test_key', testKey)
+            .order('id', { ascending: true });
+        if (error) throw new Error(kahootFriendlyError(error));
+        const sourceRows = (rows || []).filter(row => Array.isArray(row.a) && row.a.length >= 2 &&
+            Number.isInteger(Number(row.c)) && Number(row.c) >= 0 && Number(row.c) < row.a.length && String(row.q || '').trim());
+        if (!sourceRows.length) throw new Error('В выбранном тесте нет вопросов с корректными вариантами ответов.');
+
+        const prepared = shuffleArray(sourceRows).map(row => {
+            const original = row.a.map((text, index) => ({ text: String(text), correct: index === Number(row.c) }));
+            const correct = original.find(item => item.correct);
+            let picked;
+            if (original.length > 4) picked = [correct, ...shuffleArray(original.filter(item => !item.correct)).slice(0, 3)];
+            else picked = original;
+            const mixed = shuffleArray(picked);
+            return { q: String(row.q), a: mixed.map(item => item.text), c: mixed.findIndex(item => item.correct) };
+        });
+        const questionsPublic = prepared.map(question => ({ q: question.q, a: question.a }));
+        const answerKeys = prepared.map(question => question.c);
+        const hostToken = kahootRandomToken();
+        let created = null;
+        let lastError = null;
+        for (let attempt = 0; attempt < 5 && !created; attempt++) {
+            const pin = String(Math.floor(100000 + Math.random() * 900000));
+            try {
+                created = await kahootRpc('kahoot_create_game', {
+                    p_pin: pin,
+                    p_title: TEST_TITLES[testKey] || testKey,
+                    p_host_name: kahootCurrentUserName() || 'Ведущий',
+                    p_test_key: testKey,
+                    p_questions: questionsPublic,
+                    p_answer_keys: answerKeys,
+                    p_host_token: hostToken,
+                    p_duration_seconds: duration
+                });
+            } catch (error) {
+                lastError = error;
+                if (!/PIN уже используется|PIN_IN_USE|duplicate key/i.test(error.message)) throw error;
+            }
+        }
+        if (!created) throw lastError || new Error('Не удалось создать комнату.');
+        const hostSession = {
+            role: 'host', pin: created.pin, gameId: created.id, token: hostToken,
+            title: created.title || TEST_TITLES[testKey] || testKey, testKey, questions: prepared, duration
+        };
+        localStorage.setItem('kahoot_host_session', JSON.stringify(hostSession));
+        // Prevent an old participant session on this browser from being resumed by mistake.
+        localStorage.removeItem('kahoot_player_session');
+        kahootSession = { ...hostSession, game: null, players: [], roundResult: null, answerRows: [] };
+        await kahootConnectRealtime(created.id);
+    } catch (error) {
+        alert(kahootFriendlyError(error));
+    } finally {
+        kahootActionInProgress = false;
+    }
+};
+
+window.kahootJoinGame = async function() {
+    if (kahootActionInProgress) return;
+    const pin = String(document.getElementById('ql-pin-input')?.value || '').replace(/\D/g, '').slice(0, 6);
+    const name = String(document.getElementById('ql-name-input')?.value || '').trim();
+    if (!/^\d{6}$/.test(pin)) return alert('Введите шестизначный PIN-код.');
+    if (!name || name.length > 24) return alert('Имя должно содержать от 1 до 24 символов.');
+    kahootActionInProgress = true;
+    try {
+        const token = kahootRandomToken();
+        const joined = await kahootRpc('kahoot_join_game', { p_pin: pin, p_player_name: name, p_player_token: token });
+        const playerSession = { role: 'player', pin: joined.pin, gameId: joined.game_id, playerId: joined.player_id, token, name: joined.player_name };
+        localStorage.setItem('kahoot_player_session', JSON.stringify(playerSession));
+        localStorage.removeItem('kahoot_host_session');
+        kahootSession = { ...playerSession, game: null, players: [], roundResult: null, myRoundAnswer: null };
+        await kahootConnectRealtime(joined.game_id);
+        try { window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`); } catch (_) {}
+    } catch (error) {
+        alert(kahootFriendlyError(error));
+    } finally {
+        kahootActionInProgress = false;
+    }
+};
+
+window.kahootResumeSaved = async function() {
+    if (kahootActionInProgress) return;
+    kahootActionInProgress = true;
+    try {
+        const host = (() => { try { return JSON.parse(localStorage.getItem('kahoot_host_session') || 'null'); } catch (_) { return null; } })();
+        const player = (() => { try { return JSON.parse(localStorage.getItem('kahoot_player_session') || 'null'); } catch (_) { return null; } })();
+        if (host?.gameId && host?.token && Array.isArray(host.questions)) {
+            kahootSession = { ...host, role: 'host', game: null, players: [], roundResult: null, answerRows: [] };
+            await kahootConnectRealtime(host.gameId);
+        } else if (player?.gameId && player?.playerId && player?.token) {
+            kahootSession = { ...player, role: 'player', game: null, players: [], roundResult: null, myRoundAnswer: null };
+            await kahootConnectRealtime(player.gameId);
+        } else {
+            alert('Сохранённая сессия не найдена. Подключитесь к игре заново.');
+            await window.openKahootMenu();
+        }
+    } catch (error) {
+        alert(kahootFriendlyError(error));
+    } finally {
+        kahootActionInProgress = false;
+    }
+};
+
+window.kahootSync = async function() {
+    if (!kahootSession?.gameId) return;
+    if (kahootSyncInProgress) { kahootSyncQueued = true; return; }
+    kahootSyncInProgress = true;
+    try {
+        const oldQuestionIndex = kahootSession.game?.question_index;
+        const { data: game, error: gameError } = await supabaseClient.from('kahoot_games').select('*').eq('id', kahootSession.gameId).maybeSingle();
+        if (gameError) throw new Error(kahootFriendlyError(gameError));
+        if (!game) throw new Error('Игровая комната больше не существует.');
+        kahootSession.game = game;
+        const { data: players, error: playersError } = await supabaseClient.from('kahoot_players').select('id, game_id, player_name, score, streak, answered, joined_at').eq('game_id', game.id).order('joined_at', { ascending: true });
+        if (playersError) throw new Error(kahootFriendlyError(playersError));
+        kahootSession.players = players || [];
+
+        if (oldQuestionIndex !== undefined && oldQuestionIndex !== game.question_index) {
+            kahootSession.roundResult = null;
+            kahootSession.myRoundAnswer = null;
+            kahootSession.answerRows = [];
+        }
+        const roundIsRevealed = ['reveal', 'leaderboard', 'finished'].includes(game.status) && game.question_index >= 0;
+        if (roundIsRevealed) {
+            try {
+                kahootSession.roundResult = await kahootRpc('kahoot_get_round_result', { p_pin: kahootSession.pin });
+            } catch (_) { kahootSession.roundResult = null; }
+            const { data: answerRows, error: answerError } = await supabaseClient.from('kahoot_answers')
+                .select('player_id, answer_index, is_correct, points, response_ms')
+                .eq('game_id', game.id).eq('question_index', game.question_index);
+            if (!answerError) kahootSession.answerRows = answerRows || [];
+            if (kahootSession.role === 'player') {
+                kahootSession.myRoundAnswer = (kahootSession.answerRows || []).find(row => row.player_id === kahootSession.playerId) || null;
+            }
+        }
+        kahootRenderCurrent();
+    } catch (error) {
+        showScreen('screen-kahoot');
+        screenKahoot.innerHTML = `<div class="ql-shell"><div class="ql-error">${escapeHtml(kahootFriendlyError(error))}</div><button class="ql-secondary-button" onclick="window.kahootBackToMenu()">Вернуться в меню</button></div>`;
+    } finally {
+        kahootSyncInProgress = false;
+        if (kahootSyncQueued) {
+            kahootSyncQueued = false;
+            window.kahootSync();
+        }
+    }
+};
+
+function kahootEscape(value) { return escapeHtml(value); }
+
+function kahootColorClass(index) {
+    return ['red', 'blue', 'yellow', 'green'][index] || 'blue';
+}
+
+function kahootChoicesHtml(question, opts = {}) {
+    const correctIndex = Number.isInteger(opts.correctIndex) ? opts.correctIndex : -1;
+    const chosenIndex = Number.isInteger(opts.chosenIndex) ? opts.chosenIndex : -1;
+    const disabled = !!opts.disabled;
+    const clickable = !!opts.clickable;
+    return (question?.a || []).map((answer, index) => {
+        let cls = `ql-answer ql-answer-${kahootColorClass(index)}`;
+        if (opts.reveal && index === correctIndex) cls += ' ql-answer-correct';
+        else if (opts.reveal && index === chosenIndex && chosenIndex !== correctIndex) cls += ' ql-answer-wrong';
+        const onClick = clickable ? `onclick="window.kahootSubmitAnswer(${index})"` : '';
+        const isDisabled = disabled ? 'disabled' : '';
+        return `<button class="${cls}" ${onClick} ${isDisabled}><span class="ql-answer-shape">${['▲', '◆', '●', '■'][index] || '●'}</span><span>${kahootEscape(answer)}</span></button>`;
+    }).join('');
+}
+
+function kahootRankingsHtml(players) {
+    const sorted = [...(players || [])].sort((a, b) => (b.score || 0) - (a.score || 0) || new Date(a.joined_at) - new Date(b.joined_at));
+    if (!sorted.length) return '<div class="ql-empty-state">Пока нет участников.</div>';
+    return `<div class="ql-ranking-list">${sorted.map((player, index) => `
+        <div class="ql-ranking-row ${index < 3 ? `rank-${index + 1}` : ''}">
+            <div class="ql-rank-number">${index === 0 ? '👑' : index + 1}</div>
+            <div class="ql-rank-name">${kahootEscape(player.player_name)}${player.id === kahootSession?.playerId ? ' <span class="ql-you">ВЫ</span>' : ''}</div>
+            <div class="ql-rank-score">${Number(player.score || 0).toLocaleString()} <small>очков</small></div>
+        </div>`).join('')}</div>`;
+}
+
+function kahootCommonHeader(subtitle = '') {
+    return `<div class="ql-game-header"><div class="ql-brand"><span class="ql-brand-mark">Q</span><span>QUIZ LIVE</span></div><div class="ql-header-center">${kahootEscape(subtitle)}</div><button class="ql-nav-button" onclick="window.kahootBackToMenu()">Меню</button></div>`;
+}
+
+function kahootRenderCurrent() {
+    if (!kahootSession?.game) return;
+    showScreen('screen-kahoot');
+    if (kahootSession.role === 'host') kahootRenderHost();
+    else kahootRenderPlayer();
+}
+
+function kahootRenderHost() {
+    const s = kahootSession;
+    const g = s.game;
+    const questionIndex = Number(g.question_index);
+    const question = s.questions?.[questionIndex] || g.questions?.[questionIndex];
+    const answeredCount = s.players.filter(player => player.answered).length;
+    const timeLeft = kahootSecondsLeft(g);
+    let body = '';
+
+    if (g.status === 'lobby') {
+        body = `
+            <div class="ql-lobby-hero"><div class="ql-panel-kicker">КОМНАТА ОЖИДАНИЯ</div><h1>Подключайтесь к игре</h1><p>Участники вводят PIN на вашем сайте или открывают ссылку/QR-код.</p>
+                <div class="ql-pin-label">PIN-КОД ИГРЫ</div><div class="ql-pin-number">${kahootEscape(s.pin)}</div>
+                <div class="ql-host-share"><button class="ql-secondary-button" onclick="window.kahootCopyLink()">⧉ Скопировать ссылку</button><div id="ql-qr-code" class="ql-qr-box"></div></div>
+            </div>
+            <div class="ql-lobby-players"><div class="ql-section-title"><span>Участники</span><span class="ql-count-badge">${s.players.length}</span></div>
+                ${s.players.length ? `<div class="ql-player-pills">${s.players.map((player, i) => `<span class="ql-player-pill"><span>${['✦','◆','●','▲'][i % 4]}</span>${kahootEscape(player.player_name)}</span>`).join('')}</div>` : '<div class="ql-empty-state">Пока никто не подключился. Покажите PIN группе.</div>'}
+                <button class="ql-primary-button ql-start-button" ${s.players.length ? '' : 'disabled'} onclick="window.kahootHostAction('start', 0)">Начать игру →</button>
+                <div class="ql-small-note">Вопросов: ${s.questions.length} · Время на ответ: ${g.duration_seconds} сек.</div>
+            </div>`;
+    } else if (g.status === 'question' && question) {
+        const answeredPercent = s.players.length ? Math.round(answeredCount / s.players.length * 100) : 0;
+        body = `
+            <div class="ql-round-meta"><span>ВОПРОС ${questionIndex + 1} / ${s.questions.length}</span><span id="ql-time-left" class="ql-time-badge">${timeLeft}</span></div>
+            <div class="ql-time-track"><div id="ql-time-bar" style="width:${Math.max(0, timeLeft / g.duration_seconds * 100)}%"></div></div>
+            <div class="ql-host-question"><div class="ql-panel-kicker">ВОПРОС ДЛЯ ВСЕХ ИГРОКОВ</div><h1>${kahootEscape(question.q)}</h1></div>
+            <div class="ql-answer-grid ql-host-answers">${kahootChoicesHtml(question)}</div>
+            <div class="ql-response-status"><div><strong id="ql-answered-count">${answeredCount}</strong> из ${s.players.length} ответили</div><div class="ql-response-track"><span style="width:${answeredPercent}%"></span></div></div>
+            <button class="ql-primary-button ql-reveal-button" onclick="window.kahootHostAction('reveal')">Показать результаты ↗</button>`;
+    } else if ((g.status === 'reveal' || g.status === 'leaderboard') && question) {
+        const correctIndex = s.questions?.[questionIndex]?.c ?? s.roundResult?.correct_index ?? -1;
+        if (g.status === 'reveal') {
+            body = `
+                <div class="ql-round-meta"><span>РЕЗУЛЬТАТЫ ВОПРОСА ${questionIndex + 1}</span><span class="ql-state-pill">Ответы приняты</span></div>
+                <div class="ql-host-question"><div class="ql-panel-kicker">ПРАВИЛЬНЫЙ ОТВЕТ ПОКАЗАН ЗЕЛЁНЫМ</div><h1>${kahootEscape(question.q)}</h1></div>
+                <div class="ql-answer-grid">${kahootChoicesHtml(question, { reveal: true, correctIndex })}</div>
+                <div class="ql-result-summary"><div><strong>${(s.answerRows || []).filter(row => row.is_correct).length}</strong><span>правильных ответов</span></div><div><strong>${(s.answerRows || []).length}</strong><span>ответили</span></div><div><strong>${s.players.length - (s.answerRows || []).length}</strong><span>без ответа</span></div></div>
+                <button class="ql-primary-button" onclick="window.kahootHostAction('leaderboard')">Показать таблицу лидеров →</button>`;
+        } else {
+            body = `<div class="ql-leaderboard-heading"><div class="ql-panel-kicker">ПРОМЕЖУТОЧНЫЙ РЕЗУЛЬТАТ</div><h1>Таблица лидеров</h1><p>После каждого раунда очки пересчитываются по правильности и скорости ответа.</p></div>
+                ${kahootRankingsHtml(s.players)}
+                <button class="ql-primary-button" onclick="window.kahootHostNext()">${questionIndex + 1 >= s.questions.length ? 'Завершить игру' : 'Следующий вопрос →'}</button>`;
+        }
+    } else {
+        body = `<div class="ql-leaderboard-heading"><div class="ql-panel-kicker">ИГРА ЗАВЕРШЕНА</div><h1>Финальная таблица</h1><p>Отличная игра! Итоговый результат участников.</p></div>
+            ${kahootRankingsHtml(s.players)}
+            <div class="ql-toolbar"><button class="ql-primary-button" onclick="window.kahootBackToMenu()">Вернуться в меню</button><button class="ql-secondary-button" onclick="window.kahootNewGame()">Создать ещё игру</button></div>`;
+    }
+    screenKahoot.innerHTML = `<div class="ql-shell ql-game-shell">${kahootCommonHeader(`${g.title} · Ведущий`)}${body}</div>`;
+    if (g.status === 'lobby') kahootRenderQr();
+}
+
+function kahootRenderPlayer() {
+    const s = kahootSession;
+    const g = s.game;
+    const index = Number(g.question_index);
+    const question = g.questions?.[index];
+    const me = s.players.find(player => player.id === s.playerId);
+    const timeLeft = kahootSecondsLeft(g);
+    let body = '';
+
+    if (g.status === 'lobby') {
+        body = `<div class="ql-player-wait"><div class="ql-wait-pulse">✓</div><div class="ql-panel-kicker">ВЫ ПОДКЛЮЧИЛИСЬ</div><h1>Привет, ${kahootEscape(s.name)}!</h1><p>Вы в игре <strong>${kahootEscape(g.title)}</strong>. Смотрите на экран ведущего — первый вопрос скоро появится.</p><div class="ql-pin-chip">PIN ${kahootEscape(s.pin)}</div><div class="ql-waiting-dots"><span></span><span></span><span></span></div><div class="ql-small-note">Участников в комнате: ${s.players.length}</div></div>`;
+    } else if (g.status === 'question' && question) {
+        const hasAnswered = !!me?.answered;
+        body = `<div class="ql-round-meta"><span>ВОПРОС ${index + 1} / ${g.questions.length}</span><span id="ql-time-left" class="ql-time-badge">${timeLeft}</span></div>
+            <div class="ql-time-track"><div id="ql-time-bar" style="width:${Math.max(0, timeLeft / g.duration_seconds * 100)}%"></div></div>
+            <div class="ql-player-question"><h1>${kahootEscape(question.q)}</h1><div class="ql-small-note">Игрок: ${kahootEscape(s.name)}</div></div>
+            ${hasAnswered ? `<div class="ql-answer-locked"><div class="ql-lock-check">✓</div><h2>Ответ зафиксирован!</h2><p>Отлично. Дождитесь окончания раунда, чтобы увидеть результат.</p><div class="ql-waiting-dots"><span></span><span></span><span></span></div></div>` : `<div class="ql-answer-grid ql-player-answers">${kahootChoicesHtml(question, { clickable: true, disabled: timeLeft <= 0 })}</div><div class="ql-small-note">Выберите один вариант. Чем быстрее правильный ответ, тем больше очков.</div>`}`;
+    } else if ((g.status === 'reveal' || g.status === 'leaderboard') && question) {
+        const correctIndex = s.roundResult?.correct_index ?? -1;
+        const answer = s.myRoundAnswer;
+        const correct = !!answer?.is_correct;
+        body = `<div class="ql-player-result ${correct ? 'is-correct' : 'is-wrong'}"><div class="ql-result-symbol">${correct ? '✓' : '↻'}</div><div class="ql-panel-kicker">ВОПРОС ${index + 1} · РЕЗУЛЬТАТ</div><h1>${correct ? 'Правильно!' : 'В этот раз не получилось'}</h1><div class="ql-earned-points">+${Number(answer?.points || 0).toLocaleString()} <span>очков</span></div><p>${correct ? 'Отличная реакция! Следите за следующим вопросом.' : 'Запомните правильный вариант — впереди ещё вопросы.'}</p></div>
+            <div class="ql-player-question"><h2>${kahootEscape(question.q)}</h2></div><div class="ql-answer-grid">${kahootChoicesHtml(question, { reveal: true, correctIndex, chosenIndex: answer ? answer.answer_index : -1 })}</div>
+            ${g.status === 'leaderboard' ? `<div class="ql-player-rank-card"><div class="ql-panel-kicker">ТЕКУЩИЙ РЕЗУЛЬТАТ</div>${kahootRankingsHtml(s.players)}</div>` : `<div class="ql-waiting-banner">Ведущий скоро покажет таблицу лидеров…</div>`}`;
+    } else {
+        const sorted = [...s.players].sort((a, b) => b.score - a.score);
+        const place = sorted.findIndex(player => player.id === s.playerId) + 1;
+        body = `<div class="ql-player-result is-correct"><div class="ql-result-symbol">🏁</div><div class="ql-panel-kicker">ИГРА ЗАВЕРШЕНА</div><h1>Спасибо за игру, ${kahootEscape(s.name)}!</h1><div class="ql-earned-points">${Number(me?.score || 0).toLocaleString()} <span>очков</span></div><p>Ваш итоговый результат: ${place || '—'}-е место из ${s.players.length} участников.</p></div><div class="ql-player-rank-card"><h2>Финальная таблица лидеров</h2>${kahootRankingsHtml(s.players)}</div><button class="ql-primary-button" onclick="window.kahootBackToMenu()">Выйти в меню</button>`;
+    }
+    screenKahoot.innerHTML = `<div class="ql-shell ql-game-shell">${kahootCommonHeader(`${g.title} · ${s.name}`)}${body}</div>`;
+}
+
+function kahootSecondsLeft(game) {
+    if (!game || game.status !== 'question' || !game.question_started_at) return Number(game?.duration_seconds || 20);
+    const deadline = new Date(game.question_started_at).getTime() + Number(game.duration_seconds || 20) * 1000;
+    return Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+}
+
+function kahootClockTick() {
+    if (!kahootSession?.game || kahootSession.game.status !== 'question') return;
+    const game = kahootSession.game;
+    const secondsLeft = kahootSecondsLeft(game);
+    const timeText = document.getElementById('ql-time-left');
+    const timeBar = document.getElementById('ql-time-bar');
+    if (timeText) timeText.textContent = String(secondsLeft);
+    if (timeBar) timeBar.style.width = `${Math.max(0, secondsLeft / Number(game.duration_seconds || 20) * 100)}%`;
+    if (kahootSession.role === 'host' && secondsLeft <= 0 && !kahootActionInProgress) {
+        window.kahootHostAction('reveal');
+    }
+    if (kahootSession.role === 'player' && secondsLeft <= 0) {
+        document.querySelectorAll('.ql-player-answers .ql-answer').forEach(button => { button.disabled = true; });
+    }
+}
+
+function kahootRenderQr() {
+    const container = document.getElementById('ql-qr-code');
+    if (!container) return;
+    if (typeof QRCode === 'undefined') {
+        container.innerHTML = '<span>Откройте ссылку на телефоне</span>';
+        return;
+    }
+    container.innerHTML = '';
+    try { new QRCode(container, { text: kahootUrl(kahootSession.pin), width: 150, height: 150, correctLevel: QRCode.CorrectLevel.M }); }
+    catch (_) { container.textContent = `PIN ${kahootSession.pin}`; }
+}
+
+window.kahootCopyLink = async function() {
+    if (!kahootSession?.pin) return;
+    await kahootCopy(kahootUrl(kahootSession.pin));
+};
+
+window.kahootHostAction = async function(action, questionIndex = null) {
+    if (!kahootSession || kahootSession.role !== 'host' || kahootActionInProgress) return;
+    kahootActionInProgress = true;
+    try {
+        await kahootRpc('kahoot_host_action', {
+            p_pin: kahootSession.pin,
+            p_host_token: kahootSession.token,
+            p_action: action,
+            p_question_index: questionIndex
+        });
+        await window.kahootSync();
+    } catch (error) {
+        alert(kahootFriendlyError(error));
+    } finally {
+        kahootActionInProgress = false;
+    }
+};
+
+window.kahootHostNext = async function() {
+    if (!kahootSession?.game) return;
+    await window.kahootHostAction('next', Number(kahootSession.game.question_index) + 1);
+};
+
+window.kahootSubmitAnswer = async function(answerIndex) {
+    const s = kahootSession;
+    if (!s || s.role !== 'player' || !s.game || s.game.status !== 'question') return;
+    const me = s.players.find(player => player.id === s.playerId);
+    if (me?.answered || kahootActionInProgress) return;
+    kahootActionInProgress = true;
+    document.querySelectorAll('.ql-player-answers .ql-answer').forEach(button => { button.disabled = true; });
+    try {
+        const result = await kahootRpc('kahoot_submit_answer', {
+            p_pin: s.pin,
+            p_player_id: s.playerId,
+            p_player_token: s.token,
+            p_question_index: Number(s.game.question_index),
+            p_answer_index: Number(answerIndex)
+        });
+        s.myRoundAnswer = result;
+        await window.kahootSync();
+    } catch (error) {
+        alert(kahootFriendlyError(error));
+        await window.kahootSync();
+    } finally {
+        kahootActionInProgress = false;
+    }
+};
+
+window.kahootNewGame = async function() {
+    await kahootStopRealtime();
+    kahootSession = null;
+    localStorage.removeItem('kahoot_host_session');
+    localStorage.removeItem('kahoot_player_session');
+    await window.openKahootMenu();
+};
+
+
+// ==========================================
 // ИНИЦИАЛИЗАЦИЯ ПРИЛОЖЕНИЯ
 // ==========================================
 
@@ -1939,6 +2534,12 @@ async function init() {
             state.currentUser = parsed;
             if (sessionCheckInterval) clearInterval(sessionCheckInterval);
             sessionCheckInterval = setInterval(securityCheck, 15000);
+
+            // A QR/link with a game PIN should open the public join menu even when this browser is logged in.
+            if (/kahoot=\d{6}/i.test(window.location.hash)) {
+                await window.openKahootMenu();
+                return;
+            }
 
             if (parsed.role === 'admin' || parsed.role === 'superadmin') { 
                 try {
@@ -1981,6 +2582,7 @@ async function init() {
         }
     }
     renderLogin();
+    if (/kahoot=\d{6}/i.test(window.location.hash)) window.openKahootMenu();
 }
 
 // Доп. подстраховка: гарантированно сохраняем прогресс теста при закрытии
