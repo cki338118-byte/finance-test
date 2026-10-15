@@ -1930,7 +1930,9 @@ let kahootRealtimeChannel = null;
 let kahootClockTimer = null;
 let kahootActionInProgress = false;
 let kahootSyncInProgress = false;
-let kahootSyncQueued = false;
+let kahootSyncQueued = null;
+let kahootRealtimeSyncTimer = null;
+let kahootRealtimeSyncRequested = null;
 
 function kahootRandomToken() {
     if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
@@ -1990,11 +1992,44 @@ async function kahootCopy(text) {
     }
 }
 
+function kahootMergeSyncOptions(target, options) {
+    if (!target) {
+        return {
+            refreshGame: !!options.refreshGame,
+            refreshPlayers: !!options.refreshPlayers,
+            render: options.render !== false
+        };
+    }
+    target.refreshGame = target.refreshGame || !!options.refreshGame;
+    target.refreshPlayers = target.refreshPlayers || !!options.refreshPlayers;
+    target.render = target.render || options.render !== false;
+    return target;
+}
+
+// Realtime can deliver several row events for a single user action. Batch nearby
+// events into one refresh instead of making every browser issue duplicate queries.
+function kahootQueueRealtimeSync(options) {
+    kahootRealtimeSyncRequested = kahootMergeSyncOptions(kahootRealtimeSyncRequested, options);
+    if (kahootRealtimeSyncTimer) clearTimeout(kahootRealtimeSyncTimer);
+    kahootRealtimeSyncTimer = setTimeout(() => {
+        const requested = kahootRealtimeSyncRequested || { refreshGame: true, refreshPlayers: true, render: true };
+        kahootRealtimeSyncRequested = null;
+        kahootRealtimeSyncTimer = null;
+        window.kahootSync(requested);
+    }, 120);
+}
+
 async function kahootStopRealtime() {
     if (kahootClockTimer) {
         clearInterval(kahootClockTimer);
         kahootClockTimer = null;
     }
+    if (kahootRealtimeSyncTimer) {
+        clearTimeout(kahootRealtimeSyncTimer);
+        kahootRealtimeSyncTimer = null;
+    }
+    kahootRealtimeSyncRequested = null;
+    kahootSyncQueued = null;
     if (kahootRealtimeChannel && supabaseClient) {
         try { await supabaseClient.removeChannel(kahootRealtimeChannel); } catch (_) {}
         kahootRealtimeChannel = null;
@@ -2004,8 +2039,21 @@ async function kahootStopRealtime() {
 async function kahootConnectRealtime(gameId) {
     await kahootStopRealtime();
     kahootRealtimeChannel = supabaseClient.channel(`quiz-live-${gameId}`)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'kahoot_games', filter: `id=eq.${gameId}` }, () => window.kahootSync())
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'kahoot_players', filter: `game_id=eq.${gameId}` }, () => window.kahootSync())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'kahoot_games', filter: `id=eq.${gameId}` }, () => {
+            kahootQueueRealtimeSync({ refreshGame: true, refreshPlayers: true, render: true });
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'kahoot_players', filter: `game_id=eq.${gameId}` }, () => {
+            const role = kahootSession?.role;
+            const phase = kahootSession?.game?.status;
+            if (role === 'host') {
+                // During a question only the answered counter changes; avoid rebuilding
+                // the complete host screen on every participant's answer.
+                kahootQueueRealtimeSync({ refreshGame: false, refreshPlayers: true, render: phase !== 'question' });
+            } else if (['lobby', 'leaderboard', 'finished'].includes(phase)) {
+                kahootQueueRealtimeSync({ refreshGame: false, refreshPlayers: true, render: true });
+            }
+            // Players do not need to re-render their active question for other players' answers.
+        })
         .subscribe();
     kahootClockTimer = setInterval(kahootClockTick, 300);
     await window.kahootSync();
@@ -2237,50 +2285,93 @@ window.kahootResumeSaved = async function() {
     }
 };
 
-window.kahootSync = async function() {
+window.kahootSync = async function(options) {
     if (!kahootSession?.gameId) return;
-    if (kahootSyncInProgress) { kahootSyncQueued = true; return; }
+    const opts = options === undefined
+        ? { refreshGame: true, refreshPlayers: true, render: true }
+        : { refreshGame: !!options.refreshGame, refreshPlayers: !!options.refreshPlayers, render: options.render !== false };
+    if (kahootSyncInProgress) {
+        kahootSyncQueued = kahootMergeSyncOptions(kahootSyncQueued, opts);
+        return;
+    }
     kahootSyncInProgress = true;
+    const sessionGameId = kahootSession.gameId;
     try {
-        const oldQuestionIndex = kahootSession.game?.question_index;
-        const { data: game, error: gameError } = await supabaseClient.from('kahoot_games').select('*').eq('id', kahootSession.gameId).maybeSingle();
-        if (gameError) throw new Error(kahootFriendlyError(gameError));
-        if (!game) throw new Error('Игровая комната больше не существует.');
+        const previousGame = kahootSession.game;
+        const oldQuestionIndex = previousGame?.question_index;
+        let game = previousGame;
+        if (opts.refreshGame || !game) {
+            const { data, error: gameError } = await supabaseClient.from('kahoot_games').select('*').eq('id', sessionGameId).maybeSingle();
+            if (gameError) throw new Error(kahootFriendlyError(gameError));
+            if (!data) throw new Error('Игровая комната больше не существует.');
+            game = data;
+        }
+        if (kahootSession?.gameId !== sessionGameId) return;
         kahootSession.game = game;
-        const { data: players, error: playersError } = await supabaseClient.from('kahoot_players').select('id, game_id, player_name, score, streak, answered, joined_at').eq('game_id', game.id).order('joined_at', { ascending: true });
-        if (playersError) throw new Error(kahootFriendlyError(playersError));
-        kahootSession.players = players || [];
 
         if (oldQuestionIndex !== undefined && oldQuestionIndex !== game.question_index) {
             kahootSession.roundResult = null;
             kahootSession.myRoundAnswer = null;
             kahootSession.answerRows = [];
+            kahootSession.roundDataKey = null;
         }
+
+        if (opts.refreshPlayers || !Array.isArray(kahootSession.players)) {
+            const { data: players, error: playersError } = await supabaseClient.from('kahoot_players')
+                .select('id, game_id, player_name, score, streak, answered, joined_at')
+                .eq('game_id', game.id).order('joined_at', { ascending: true });
+            if (playersError) throw new Error(kahootFriendlyError(playersError));
+            if (kahootSession?.gameId !== sessionGameId) return;
+            kahootSession.players = players || [];
+        }
+
         const roundIsRevealed = ['reveal', 'leaderboard', 'finished'].includes(game.status) && game.question_index >= 0;
-        if (roundIsRevealed) {
+        const roundKey = `${game.id}:${game.question_index}`;
+        // Round answers are immutable after reveal, so fetch them only once per round.
+        if (roundIsRevealed && kahootSession.roundDataKey !== roundKey) {
+            let resultLoaded = false;
             try {
                 kahootSession.roundResult = await kahootRpc('kahoot_get_round_result', { p_pin: kahootSession.pin });
+                resultLoaded = true;
             } catch (_) { kahootSession.roundResult = null; }
             const { data: answerRows, error: answerError } = await supabaseClient.from('kahoot_answers')
                 .select('player_id, answer_index, is_correct, points, response_ms')
                 .eq('game_id', game.id).eq('question_index', game.question_index);
-            if (!answerError) kahootSession.answerRows = answerRows || [];
-            if (kahootSession.role === 'player') {
-                kahootSession.myRoundAnswer = (kahootSession.answerRows || []).find(row => row.player_id === kahootSession.playerId) || null;
+            if (!answerError) {
+                kahootSession.answerRows = answerRows || [];
+                if (kahootSession.role === 'player') {
+                    kahootSession.myRoundAnswer = kahootSession.answerRows.find(row => row.player_id === kahootSession.playerId) || null;
+                }
+                if (resultLoaded) kahootSession.roundDataKey = roundKey;
             }
         }
-        kahootRenderCurrent();
+        if (kahootSession?.gameId !== sessionGameId) return;
+        if (opts.render) kahootRenderCurrent();
+        else kahootUpdateHostAnswerStatus();
     } catch (error) {
-        showScreen('screen-kahoot');
-        screenKahoot.innerHTML = `<div class="ql-shell"><div class="ql-error">${escapeHtml(kahootFriendlyError(error))}</div><button class="ql-secondary-button" onclick="window.kahootBackToMenu()">Вернуться в меню</button></div>`;
+        if (kahootSession?.gameId === sessionGameId) {
+            showScreen('screen-kahoot');
+            screenKahoot.innerHTML = `<div class="ql-shell"><div class="ql-error">${escapeHtml(kahootFriendlyError(error))}</div><button class="ql-secondary-button" onclick="window.kahootBackToMenu()">Вернуться в меню</button></div>`;
+        }
     } finally {
         kahootSyncInProgress = false;
         if (kahootSyncQueued) {
-            kahootSyncQueued = false;
-            window.kahootSync();
+            const queued = kahootSyncQueued;
+            kahootSyncQueued = null;
+            window.kahootSync(queued);
         }
     }
 };
+
+function kahootUpdateHostAnswerStatus() {
+    if (kahootSession?.role !== 'host' || kahootSession.game?.status !== 'question') return;
+    const players = kahootSession.players || [];
+    const answeredCount = players.filter(player => player.answered).length;
+    const countNode = document.getElementById('ql-answered-count');
+    const trackNode = document.querySelector('.ql-response-track > span');
+    if (countNode) countNode.textContent = String(answeredCount);
+    if (trackNode) trackNode.style.width = `${players.length ? Math.round(answeredCount / players.length * 100) : 0}%`;
+}
 
 function kahootEscape(value) { return escapeHtml(value); }
 
