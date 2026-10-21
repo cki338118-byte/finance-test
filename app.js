@@ -2160,6 +2160,8 @@ window.openKahootMenu = async function() {
 };
 
 window.kahootBackToSite = async function() {
+    // This is an explicit exit, unlike a browser refresh.
+    sessionStorage.removeItem('kahoot_active_session');
     await kahootStopRealtime();
     kahootSession = null;
     if (state.currentUser?.role === 'admin' || state.currentUser?.role === 'superadmin') await openAdminPanel();
@@ -2168,6 +2170,8 @@ window.kahootBackToSite = async function() {
 };
 
 window.kahootBackToMenu = async function() {
+    // Do not auto-restore after the user explicitly chooses to leave the game.
+    sessionStorage.removeItem('kahoot_active_session');
     const finishedSession = kahootSession?.game?.status === 'finished' ? kahootSession : null;
     await kahootStopRealtime();
     if (finishedSession?.role === 'host') localStorage.removeItem('kahoot_host_session');
@@ -2231,6 +2235,8 @@ window.kahootCreateGame = async function() {
             title: created.title || TEST_TITLES[testKey] || testKey, testKey, questions: prepared, duration
         };
         localStorage.setItem('kahoot_host_session', JSON.stringify(hostSession));
+        // sessionStorage survives a refresh in this tab and signals that the game was active.
+        sessionStorage.setItem('kahoot_active_session', '1');
         // Prevent an old participant session on this browser from being resumed by mistake.
         localStorage.removeItem('kahoot_player_session');
         kahootSession = { ...hostSession, game: null, players: [], roundResult: null, answerRows: [] };
@@ -2254,6 +2260,7 @@ window.kahootJoinGame = async function() {
         const joined = await kahootRpc('kahoot_join_game', { p_pin: pin, p_player_name: name, p_player_token: token });
         const playerSession = { role: 'player', pin: joined.pin, gameId: joined.game_id, playerId: joined.player_id, token, name: joined.player_name };
         localStorage.setItem('kahoot_player_session', JSON.stringify(playerSession));
+        sessionStorage.setItem('kahoot_active_session', '1');
         localStorage.removeItem('kahoot_host_session');
         kahootSession = { ...playerSession, game: null, players: [], roundResult: null, myRoundAnswer: null };
         await kahootConnectRealtime(joined.game_id);
@@ -2272,9 +2279,11 @@ window.kahootResumeSaved = async function() {
         const host = (() => { try { return JSON.parse(localStorage.getItem('kahoot_host_session') || 'null'); } catch (_) { return null; } })();
         const player = (() => { try { return JSON.parse(localStorage.getItem('kahoot_player_session') || 'null'); } catch (_) { return null; } })();
         if (host?.gameId && host?.token && Array.isArray(host.questions)) {
+            sessionStorage.setItem('kahoot_active_session', '1');
             kahootSession = { ...host, role: 'host', game: null, players: [], roundResult: null, answerRows: [] };
             await kahootConnectRealtime(host.gameId);
         } else if (player?.gameId && player?.playerId && player?.token) {
+            sessionStorage.setItem('kahoot_active_session', '1');
             kahootSession = { ...player, role: 'player', game: null, players: [], roundResult: null, myRoundAnswer: null };
             await kahootConnectRealtime(player.gameId);
         } else {
@@ -2655,6 +2664,7 @@ window.kahootSubmitAnswer = async function(answerIndex) {
 };
 
 window.kahootNewGame = async function() {
+    sessionStorage.removeItem('kahoot_active_session');
     await kahootStopRealtime();
     kahootSession = null;
     localStorage.removeItem('kahoot_host_session');
@@ -2670,79 +2680,105 @@ window.kahootNewGame = async function() {
 async function init() {
     if (typeof supabase === 'undefined') {
         const loginScreen = document.getElementById('screen-login');
-        if(loginScreen) { 
-            loginScreen.classList.remove('hidden'); 
-            loginScreen.innerHTML = '<h2 style="color:#dc3545; padding:30px; text-align:center;">❌ Ошибка: База данных не загрузилась.</h2>'; 
+        if(loginScreen) {
+            loginScreen.classList.remove('hidden');
+            loginScreen.innerHTML = '<h2 style="color:#dc3545; padding:30px; text-align:center;">❌ Ошибка: База данных не загрузилась.</h2>';
         }
         return;
     }
-    
+
+    // Restore the site's login when it is still valid. A timed-out site login
+    // should not prevent a separate Kahoot host/player token from reconnecting.
     const savedUserStr = localStorage.getItem('user');
     if (savedUserStr) {
         try {
             const parsed = JSON.parse(savedUserStr);
             if (parsed.loginTimestamp && (Date.now() - parsed.loginTimestamp > SESSION_LIMIT_MS)) {
-                localStorage.removeItem('user'); 
-                clearTestProgress(); 
-                alert('Время сессии истекло.'); 
-                renderLogin(); 
-                return;
-            }
-            
-            state.currentUser = parsed;
-            if (sessionCheckInterval) clearInterval(sessionCheckInterval);
-            sessionCheckInterval = setInterval(securityCheck, 15000);
-
-            // A QR/link with a game PIN should open the public join menu even when this browser is logged in.
-            if (/kahoot=\d{6}/i.test(window.location.hash)) {
-                await window.openKahootMenu();
-                return;
-            }
-
-            if (parsed.role === 'admin' || parsed.role === 'superadmin') { 
-                try {
-                    await openAdminPanel();
-                } catch (e) {
-                    // Временная ошибка сети/базы не должна выкидывать администратора из системы
-                    console.error('Не удалось загрузить админ-панель:', e);
-                }
+                localStorage.removeItem('user');
+                clearTestProgress();
+                alert('Время сессии истекло.');
             } else {
-                const savedProgressStr = localStorage.getItem('test_progress');
-                if (savedProgressStr) {
-                    try {
-                        const prog = JSON.parse(savedProgressStr);
-                        await syncSubjects();
-                        state.currentTestKey = prog.currentTestKey; 
-                        state.currentPartName = prog.currentPartName || null;
-                        state.questions = prog.questions; 
-                        state.currentIndex = prog.currentIndex; 
-                        state.score = prog.score;
-                        state.wrongQuestions = prog.wrongQuestions; 
-                        state.isRepeatMode = prog.isRepeatMode; 
-                        state.qStates = prog.qStates || {};
-                        
-                        if (state.currentIndex >= state.questions.length) {
-                            window.finishQuiz();
-                        } else { 
-                            renderQuizShell(); 
-                            window.loadQuestion(); 
-                        }
-                        return;
-                    } catch (e) { 
-                        clearTestProgress(); 
-                    }
-                }
-                window.renderSelection();
+                state.currentUser = parsed;
+                if (sessionCheckInterval) clearInterval(sessionCheckInterval);
+                sessionCheckInterval = setInterval(securityCheck, 15000);
             }
-            return;
-        } catch (e) { 
-            localStorage.removeItem('user'); 
+        } catch (e) {
+            localStorage.removeItem('user');
         }
     }
-    renderLogin();
-    if (/kahoot=\d{6}/i.test(window.location.hash)) window.openKahootMenu();
-}
 
+    const urlMatch = window.location.hash.match(/kahoot=(\d{6})/i);
+    const pinFromLink = urlMatch ? urlMatch[1] : '';
+    const savedHost = (() => { try { return JSON.parse(localStorage.getItem('kahoot_host_session') || 'null'); } catch (_) { return null; } })();
+    const savedPlayer = (() => { try { return JSON.parse(localStorage.getItem('kahoot_player_session') || 'null'); } catch (_) { return null; } })();
+    const savedSessionPin = savedHost?.pin || savedPlayer?.pin || '';
+    const savedSessionExists = !!(
+        (savedHost?.gameId && savedHost?.token && Array.isArray(savedHost.questions)) ||
+        (savedPlayer?.gameId && savedPlayer?.playerId && savedPlayer?.token)
+    );
+
+    // A link to a different room takes precedence over a previously saved game.
+    // Otherwise, a session marked active in this tab is restored automatically.
+    if (pinFromLink && pinFromLink !== String(savedSessionPin)) {
+        await window.openKahootMenu();
+        return;
+    }
+
+    if (sessionStorage.getItem('kahoot_active_session') === '1') {
+        if (savedSessionExists) {
+            await window.kahootResumeSaved();
+            return;
+        }
+        sessionStorage.removeItem('kahoot_active_session');
+    }
+
+    if (pinFromLink) {
+        await window.openKahootMenu();
+        return;
+    }
+
+    if (state.currentUser) {
+        const parsed = state.currentUser;
+        if (parsed.role === 'admin' || parsed.role === 'superadmin') {
+            try {
+                await openAdminPanel();
+            } catch (e) {
+                // A temporary network/database issue must not log the administrator out.
+                console.error('Не удалось загрузить админ-панель:', e);
+            }
+        } else {
+            const savedProgressStr = localStorage.getItem('test_progress');
+            if (savedProgressStr) {
+                try {
+                    const prog = JSON.parse(savedProgressStr);
+                    await syncSubjects();
+                    state.currentTestKey = prog.currentTestKey;
+                    state.currentPartName = prog.currentPartName || null;
+                    state.questions = prog.questions;
+                    state.currentIndex = prog.currentIndex;
+                    state.score = prog.score;
+                    state.wrongQuestions = prog.wrongQuestions;
+                    state.isRepeatMode = prog.isRepeatMode;
+                    state.qStates = prog.qStates || {};
+
+                    if (state.currentIndex >= state.questions.length) {
+                        window.finishQuiz();
+                    } else {
+                        renderQuizShell();
+                        window.loadQuestion();
+                    }
+                    return;
+                } catch (e) {
+                    clearTestProgress();
+                }
+            }
+            window.renderSelection();
+        }
+        return;
+    }
+
+    renderLogin();
+}
 // Доп. подстраховка: гарантированно сохраняем прогресс теста при закрытии
 // вкладки, сворачивании приложения или обновлении страницы — на случай,
 // если это происходит между обычными точками сохранения.
