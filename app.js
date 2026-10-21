@@ -2323,6 +2323,10 @@ window.kahootSync = async function(options) {
             if (playersError) throw new Error(kahootFriendlyError(playersError));
             if (kahootSession?.gameId !== sessionGameId) return;
             kahootSession.players = players || [];
+            if (kahootSession.role === 'player') {
+                // A missing player row means the host removed this participant.
+                kahootSession.wasRemoved = !kahootSession.players.some(player => player.id === kahootSession.playerId);
+            }
         }
 
         const roundIsRevealed = ['reveal', 'leaderboard', 'finished'].includes(game.status) && game.question_index >= 0;
@@ -2433,7 +2437,7 @@ function kahootRenderHost() {
                 <div class="ql-host-share"><button class="ql-secondary-button" onclick="window.kahootCopyLink()">⧉ Скопировать ссылку</button><div id="ql-qr-code" class="ql-qr-box"></div></div>
             </div>
             <div class="ql-lobby-players"><div class="ql-section-title"><span>Участники</span><span class="ql-count-badge">${s.players.length}</span></div>
-                ${s.players.length ? `<div class="ql-player-pills">${s.players.map((player, i) => `<span class="ql-player-pill"><span>${['✦','◆','●','▲'][i % 4]}</span>${kahootEscape(player.player_name)}</span>`).join('')}</div>` : '<div class="ql-empty-state">Пока никто не подключился. Покажите PIN группе.</div>'}
+                ${s.players.length ? `<div class="ql-player-pills">${s.players.map((player, i) => `<span class="ql-player-pill"><span class="ql-player-symbol">${['✦','◆','●','▲'][i % 4]}</span><span class="ql-player-pill-name">${kahootEscape(player.player_name)}</span><button type="button" class="ql-player-remove" title="Удалить участника" aria-label="Удалить ${kahootEscape(player.player_name)}" onclick="window.kahootRemovePlayer('${player.id}')">×</button></span>`).join('')}</div>` : '<div class="ql-empty-state">Пока никто не подключился. Покажите PIN группе.</div>'}
                 <button class="ql-primary-button ql-start-button" ${s.players.length ? '' : 'disabled'} onclick="window.kahootHostAction('start', 0)">Начать игру →</button>
                 <div class="ql-small-note">Вопросов: ${s.questions.length} · Время на ответ: ${g.duration_seconds} сек.</div>
             </div>`;
@@ -2476,6 +2480,10 @@ function kahootRenderPlayer() {
     const question = g.questions?.[index];
     const me = s.players.find(player => player.id === s.playerId);
     const timeLeft = kahootSecondsLeft(g);
+    if (s.wasRemoved || !me) {
+        screenKahoot.innerHTML = `<div class="ql-shell ql-game-shell">${kahootCommonHeader(`${g.title} · ${s.name}`)}<div class="ql-player-result is-wrong"><div class="ql-result-symbol">×</div><div class="ql-panel-kicker">УЧАСТИЕ ПРЕКРАЩЕНО</div><h1>Вас удалили из игры</h1><p>Ведущий исключил вас из этой комнаты. Вы больше не можете отвечать на вопросы.</p></div><button class="ql-primary-button" onclick="window.kahootBackToMenu()">Выйти в меню</button></div>`;
+        return;
+    }
     let body = '';
 
     if (g.status === 'lobby') {
@@ -2561,6 +2569,27 @@ window.kahootHostAction = async function(action, questionIndex = null) {
 window.kahootHostNext = async function() {
     if (!kahootSession?.game) return;
     await window.kahootHostAction('next', Number(kahootSession.game.question_index) + 1);
+};
+
+window.kahootRemovePlayer = async function(playerId) {
+    const s = kahootSession;
+    if (!s || s.role !== 'host' || !s.game || s.game.status !== 'lobby' || kahootActionInProgress) return;
+    const player = s.players.find(item => item.id === playerId);
+    if (!player) return;
+    if (!window.confirm(`Удалить участника «${player.player_name}» из игры?`)) return;
+    kahootActionInProgress = true;
+    try {
+        await kahootRpc('kahoot_remove_player', {
+            p_pin: s.pin,
+            p_host_token: s.token,
+            p_player_id: playerId
+        });
+        await window.kahootSync();
+    } catch (error) {
+        alert(kahootFriendlyError(error));
+    } finally {
+        kahootActionInProgress = false;
+    }
 };
 
 window.kahootSubmitAnswer = async function(answerIndex) {
