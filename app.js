@@ -2394,8 +2394,9 @@ function kahootChoicesHtml(question, opts = {}) {
     }).join('');
 }
 
-function kahootRankingsHtml(players) {
-    const sorted = [...(players || [])].sort((a, b) => (b.score || 0) - (a.score || 0) || new Date(a.joined_at) - new Date(b.joined_at));
+function kahootRankingsHtml(players, limit = null) {
+    const ordered = [...(players || [])].sort((a, b) => (b.score || 0) - (a.score || 0) || new Date(a.joined_at) - new Date(b.joined_at));
+    const sorted = Number.isInteger(limit) && limit > 0 ? ordered.slice(0, limit) : ordered;
     if (!sorted.length) return '<div class="ql-empty-state">Пока нет участников.</div>';
     return `<div class="ql-ranking-list">${sorted.map((player, index) => `
         <div class="ql-ranking-row ${index < 3 ? `rank-${index + 1}` : ''}">
@@ -2460,8 +2461,8 @@ function kahootRenderHost() {
                 <button class="ql-primary-button" onclick="window.kahootHostNext()">${questionIndex + 1 >= s.questions.length ? 'Завершить игру' : 'Следующий вопрос →'}</button>`;
         }
     } else {
-        body = `<div class="ql-leaderboard-heading"><div class="ql-panel-kicker">ИГРА ЗАВЕРШЕНА</div><h1>Финальная таблица</h1><p>Отличная игра! Итоговый результат участников.</p></div>
-            ${kahootRankingsHtml(s.players)}
+        body = `<div class="ql-leaderboard-heading"><div class="ql-panel-kicker">ИГРА ЗАВЕРШЕНА</div><h1>Финальный Top 5</h1><p>Первые пять участников по итоговым очкам. Этот список виден только ведущему.</p></div>
+            ${kahootRankingsHtml(s.players, 5)}
             <div class="ql-toolbar"><button class="ql-primary-button" onclick="window.kahootBackToMenu()">Вернуться в меню</button><button class="ql-secondary-button" onclick="window.kahootNewGame()">Создать ещё игру</button></div>`;
     }
     screenKahoot.innerHTML = `<div class="ql-shell ql-game-shell">${kahootCommonHeader(`${g.title} · Ведущий`)}${body}</div>`;
@@ -2495,7 +2496,7 @@ function kahootRenderPlayer() {
     } else {
         const sorted = [...s.players].sort((a, b) => b.score - a.score);
         const place = sorted.findIndex(player => player.id === s.playerId) + 1;
-        body = `<div class="ql-player-result is-correct"><div class="ql-result-symbol">🏁</div><div class="ql-panel-kicker">ИГРА ЗАВЕРШЕНА</div><h1>Спасибо за игру, ${kahootEscape(s.name)}!</h1><div class="ql-earned-points">${Number(me?.score || 0).toLocaleString()} <span>очков</span></div><p>Ваш итоговый результат: ${place || '—'}-е место из ${s.players.length} участников.</p></div><div class="ql-player-rank-card"><h2>Финальная таблица лидеров</h2>${kahootRankingsHtml(s.players)}</div><button class="ql-primary-button" onclick="window.kahootBackToMenu()">Выйти в меню</button>`;
+        body = `<div class="ql-player-result is-correct"><div class="ql-result-symbol">🏁</div><div class="ql-panel-kicker">ИГРА ЗАВЕРШЕНА</div><h1>Спасибо за игру, ${kahootEscape(s.name)}!</h1><div class="ql-earned-points">${Number(me?.score || 0).toLocaleString()} <span>очков</span></div><p>Ваш итоговый результат: ${place || '—'}-е место из ${s.players.length} участников.</p><div class="ql-waiting-banner">Итоговый список участников доступен ведущему.</div></div><button class="ql-primary-button" onclick="window.kahootBackToMenu()">Выйти в меню</button>`;
     }
     screenKahoot.innerHTML = `<div class="ql-shell ql-game-shell">${kahootCommonHeader(`${g.title} · ${s.name}`)}${body}</div>`;
 }
