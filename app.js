@@ -2340,8 +2340,12 @@ window.kahootSync = async function(options) {
                     });
                     kahootSession.wasRemoved = false;
                 } catch (finalResultError) {
-                    kahootSession.myFinalResult = null;
-                    kahootSession.wasRemoved = true;
+                    if (/Вас удалили из игры|Сессия игрока не подтверждена/.test(String(finalResultError?.message || ''))) {
+                        kahootSession.myFinalResult = null;
+                        kahootSession.wasRemoved = true;
+                    } else {
+                        throw finalResultError;
+                    }
                 }
                 if (kahootSession?.gameId !== sessionGameId) return;
                 kahootSession.players = [];
@@ -2510,7 +2514,7 @@ function kahootRenderPlayer() {
     const question = g.questions?.[index];
     const me = s.players.find(player => player.id === s.playerId);
     const timeLeft = kahootSecondsLeft(g);
-    if (s.wasRemoved || !me) {
+    if (s.wasRemoved || (!me && g.status !== 'finished')) {
         screenKahoot.innerHTML = `<div class="ql-shell ql-game-shell">${kahootCommonHeader(`${g.title} · ${s.name}`)}<div class="ql-player-result is-wrong"><div class="ql-result-symbol">×</div><div class="ql-panel-kicker">УЧАСТИЕ ПРЕКРАЩЕНО</div><h1>Вас удалили из игры</h1><p>Ведущий исключил вас из этой комнаты. Вы больше не можете отвечать на вопросы.</p></div><button class="ql-primary-button" onclick="window.kahootBackToMenu()">Выйти в меню</button></div>`;
         return;
     }
