@@ -1954,6 +1954,7 @@ function kahootFriendlyError(error) {
         [/INVALID_PLAYER_TOKEN/i, 'Сессия игрока не подтверждена. Выйдите в меню и подключитесь заново.'],
         [/PLAYER_NOT_FOUND/i, 'Вас удалили из игры или участник больше не существует.'],
         [/GAME_ALREADY_FINISHED/i, 'Эта игра уже завершена.'],
+        [/REMOVAL_ONLY_IN_LOBBY/i, 'Удалять участников можно только до начала игры.'],
         [/ALREADY_ANSWERED/i, 'Ответ на этот вопрос уже отправлен.'],
         [/ROUND_CLOSED/i, 'Время ответа истекло или ведущий уже закрыл вопрос.'],
         [/INVALID_GAME_PHASE/i, 'Это действие сейчас недоступно. Обновляем состояние игры.'],
@@ -2319,19 +2320,46 @@ window.kahootSync = async function(options) {
         }
 
         if (opts.refreshPlayers || !Array.isArray(kahootSession.players)) {
-            const { data: players, error: playersError } = await supabaseClient.from('kahoot_players')
-                .select('id, game_id, player_name, score, streak, answered, joined_at')
-                .eq('game_id', game.id).order('joined_at', { ascending: true });
-            if (playersError) throw new Error(kahootFriendlyError(playersError));
-            if (kahootSession?.gameId !== sessionGameId) return;
-            kahootSession.players = players || [];
-            if (kahootSession.role === 'player') {
-                // A missing player row means the host removed this participant.
-                kahootSession.wasRemoved = !kahootSession.players.some(player => player.id === kahootSession.playerId);
+            if (game.status === 'finished' && kahootSession.role === 'host') {
+                // Once the game ends, RLS hides the complete roster from direct table reads.
+                // The host-token RPC returns only the final Top 5.
+                const topFive = await kahootRpc('kahoot_get_final_top5', {
+                    p_pin: kahootSession.pin,
+                    p_host_token: kahootSession.token
+                });
+                if (kahootSession?.gameId !== sessionGameId) return;
+                kahootSession.players = Array.isArray(topFive) ? topFive : [];
+                kahootSession.wasRemoved = false;
+            } else if (game.status === 'finished' && kahootSession.role === 'player') {
+                // Players receive only their own final score and place, never the final roster.
+                try {
+                    kahootSession.myFinalResult = await kahootRpc('kahoot_get_player_final_result', {
+                        p_pin: kahootSession.pin,
+                        p_player_id: kahootSession.playerId,
+                        p_player_token: kahootSession.token
+                    });
+                    kahootSession.wasRemoved = false;
+                } catch (finalResultError) {
+                    kahootSession.myFinalResult = null;
+                    kahootSession.wasRemoved = true;
+                }
+                if (kahootSession?.gameId !== sessionGameId) return;
+                kahootSession.players = [];
+            } else {
+                const { data: players, error: playersError } = await supabaseClient.from('kahoot_players')
+                    .select('id, game_id, player_name, score, streak, answered, joined_at')
+                    .eq('game_id', game.id).order('joined_at', { ascending: true });
+                if (playersError) throw new Error(kahootFriendlyError(playersError));
+                if (kahootSession?.gameId !== sessionGameId) return;
+                kahootSession.players = players || [];
+                if (kahootSession.role === 'player') {
+                    // A missing player row means the host removed this participant.
+                    kahootSession.wasRemoved = !kahootSession.players.some(player => player.id === kahootSession.playerId);
+                }
             }
         }
 
-        const roundIsRevealed = ['reveal', 'leaderboard', 'finished'].includes(game.status) && game.question_index >= 0;
+        const roundIsRevealed = ['reveal', 'leaderboard'].includes(game.status) && game.question_index >= 0;
         const roundKey = `${game.id}:${game.question_index}`;
         // Round answers are immutable after reveal, so fetch them only once per round.
         if (roundIsRevealed && kahootSession.roundDataKey !== roundKey) {
@@ -2401,7 +2429,7 @@ function kahootChoicesHtml(question, opts = {}) {
 }
 
 function kahootRankingsHtml(players, limit = null) {
-    const ordered = [...(players || [])].sort((a, b) => (b.score || 0) - (a.score || 0) || new Date(a.joined_at) - new Date(b.joined_at));
+    const ordered = [...(players || [])].sort((a, b) => (b.score || 0) - (a.score || 0) || new Date(a.joined_at) - new Date(b.joined_at) || String(a.id).localeCompare(String(b.id)));
     const sorted = Number.isInteger(limit) && limit > 0 ? ordered.slice(0, limit) : ordered;
     if (!sorted.length) return '<div class="ql-empty-state">Пока нет участников.</div>';
     return `<div class="ql-ranking-list">${sorted.map((player, index) => `
@@ -2504,9 +2532,12 @@ function kahootRenderPlayer() {
             <div class="ql-player-question"><h2>${kahootEscape(question.q)}</h2></div><div class="ql-answer-grid">${kahootChoicesHtml(question, { reveal: true, correctIndex, chosenIndex: answer ? answer.answer_index : -1 })}</div>
             ${g.status === 'leaderboard' ? `<div class="ql-player-rank-card"><div class="ql-panel-kicker">ТЕКУЩИЙ РЕЗУЛЬТАТ</div>${kahootRankingsHtml(s.players)}</div>` : `<div class="ql-waiting-banner">Ведущий скоро покажет таблицу лидеров…</div>`}`;
     } else {
-        const sorted = [...s.players].sort((a, b) => b.score - a.score);
-        const place = sorted.findIndex(player => player.id === s.playerId) + 1;
-        body = `<div class="ql-player-result is-correct"><div class="ql-result-symbol">🏁</div><div class="ql-panel-kicker">ИГРА ЗАВЕРШЕНА</div><h1>Спасибо за игру, ${kahootEscape(s.name)}!</h1><div class="ql-earned-points">${Number(me?.score || 0).toLocaleString()} <span>очков</span></div><p>Ваш итоговый результат: ${place || '—'}-е место из ${s.players.length} участников.</p><div class="ql-waiting-banner">Итоговый список участников доступен ведущему.</div></div><button class="ql-primary-button" onclick="window.kahootBackToMenu()">Выйти в меню</button>`;
+        const sorted = [...s.players].sort((a, b) => (b.score || 0) - (a.score || 0) || new Date(a.joined_at) - new Date(b.joined_at) || String(a.id).localeCompare(String(b.id)));
+        const derivedPlace = sorted.findIndex(player => player.id === s.playerId) + 1;
+        const place = Number(s.myFinalResult?.place) || derivedPlace;
+        const finalScore = Number(s.myFinalResult?.score ?? me?.score ?? 0);
+        const participantCount = Number(s.myFinalResult?.participant_count ?? s.players.length);
+        body = `<div class="ql-player-result is-correct"><div class="ql-result-symbol">🏁</div><div class="ql-panel-kicker">ИГРА ЗАВЕРШЕНА</div><h1>Спасибо за игру, ${kahootEscape(s.name)}!</h1><div class="ql-earned-points">${finalScore.toLocaleString()} <span>очков</span></div><p>Ваш итоговый результат: ${place || '—'}-е место из ${participantCount} участников.</p><div class="ql-waiting-banner">Итоговый список участников доступен ведущему.</div></div><button class="ql-primary-button" onclick="window.kahootBackToMenu()">Выйти в меню</button>`;
     }
     screenKahoot.innerHTML = `<div class="ql-shell ql-game-shell">${kahootCommonHeader(`${g.title} · ${s.name}`)}${body}</div>`;
 }
